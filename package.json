@@ -1,0 +1,106 @@
+{
+  "name": "opencodex-agent",
+  "displayName": "Opencodex",
+  "description": "An independent VS Code coding agent powered by OpenCode's anonymous free models.",
+  "version": "0.1.1",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onView:opencodex.chat"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "media/icon.png",
+  "files": [
+    "dist/extension.js",
+    "media/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "opencodex",
+          "title": "Opencodex",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "opencodex": [
+        {
+          "type": "webview",
+          "id": "opencodex.chat",
+          "name": "Opencodex"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "opencodex.focus",
+        "title": "Opencodex: Focus Chat"
+      },
+      {
+        "command": "opencodex.settings",
+        "title": "Opencodex: Open Settings"
+      },
+      {
+        "command": "opencodex.clear",
+        "title": "Opencodex: New Chat"
+      }
+    ],
+    "configuration": {
+      "title": "Opencodex",
+      "properties": {
+        "opencodex.model": {
+          "type": "string",
+          "default": "",
+          "description": "Selected free OpenCode model ID. Choose it from the sidebar."
+        },
+        "opencodex.maxSteps": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum tool-loop steps per request."
+        },
+        "opencodex.approvalMode": {
+          "type": "string",
+          "enum": ["ask", "edits", "autonomous"],
+          "default": "ask",
+          "description": "Controls whether file edits and commands require confirmation."
+        },
+        "opencodex.searxngUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional base URL for a SearXNG instance with JSON output enabled."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "npm run check && npm run build && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.26",
+    "ai": "^7.0.57",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
+  }
+}
