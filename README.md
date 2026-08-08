@@ -4,9 +4,11 @@
 
 <h1 align="center">Opencodex</h1>
 
-A standalone, Codex-style coding agent that runs entirely inside VS Code. Opencodex is backed directly by OpenCode's anonymous **free** models. No OpenCode account, API key, OmniRoute, or local model server is required.
+A standalone, Codex-style coding agent that runs entirely inside VS Code. Opencodex is currently powered by OpenCode's public **free** models. No OpenCode account, API key, OmniRoute, or local model server is required.
 
 Open a project, pick a free model, and describe what you want. Opencodex reads files, searches your codebase, applies edits, and runs commands in a visible agent loop and then streams a Markdown answer with its reasoning and work steps shown alongside.
+
+More providers coming soon. 
 
 ## Highlights
 
