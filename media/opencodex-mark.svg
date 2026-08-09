@@ -1,7 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
-  <title id="title">OCX</title>
-  <desc id="description">White pixel-style OCX lettering on a black square</desc>
-  <rect width="512" height="512" rx="64" fill="#000"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OCX">
   <g fill="#fff">
     <path d="M75 166h75v22H75zM50 196h22v120H50zM153 196h22v120h-22zM75 324h75v22H75z"/>
     <path d="M225 166h100v22H225zM200 196h22v120h-22zM225 324h100v22H225z"/>

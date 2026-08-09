@@ -1,12 +1,12 @@
 {
   "name": "opencodex-agent",
   "displayName": "Opencodex",
-  "description": "An independent VS Code coding agent powered by OpenCode's anonymous free models.",
-  "version": "0.1.1",
+  "description": "The hub for free AI agents",
+  "version": "0.2.0",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.96.0"
+    "vscode": "^1.106.0"
   },
   "repository": {
     "type": "git",
@@ -17,7 +17,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onView:opencodex.chat"
+    "onView:opencodex.chat",
+    "onCommand:opencodex.openChat"
   ],
   "main": "./dist/extension.js",
   "icon": "media/icon.png",
@@ -29,11 +30,11 @@
   ],
   "contributes": {
     "viewsContainers": {
-      "activitybar": [
+      "secondarySidebar": [
         {
           "id": "opencodex",
           "title": "Opencodex",
-          "icon": "media/activity.svg"
+          "icon": "media/opencodex-o.svg"
         }
       ]
     },
@@ -48,8 +49,14 @@
     },
     "commands": [
       {
+        "command": "opencodex.openChat",
+        "title": "Opencodex: Open Chat",
+        "icon": "media/opencodex-o.svg"
+      },
+      {
         "command": "opencodex.focus",
-        "title": "Opencodex: Focus Chat"
+        "title": "Opencodex: Focus Chat",
+        "icon": "media/opencodex-o.svg"
       },
       {
         "command": "opencodex.settings",
@@ -60,31 +67,50 @@
         "title": "Opencodex: New Chat"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "opencodex.openChat",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Opencodex",
       "properties": {
         "opencodex.model": {
           "type": "string",
           "default": "",
-          "description": "Selected free OpenCode model ID. Choose it from the sidebar."
+          "description": "Selected free model ID for the active provider. Choose it from the sidebar."
+        },
+        "opencodex.provider": {
+          "type": "string",
+          "enum": ["opencode", "openrouter", "groq", "cerebras", "gemini", "mistral", "ollama"],
+          "default": "opencode",
+          "description": "Free model provider to use. OpenCode works without a key; the others need an API key saved in Settings (or a matching environment variable)."
         },
         "opencodex.maxSteps": {
           "type": "number",
           "default": 20,
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 50,
-          "description": "Maximum tool-loop steps per request."
+          "description": "Maximum tool-loop steps per request. Set to 0 for unlimited tasks."
         },
         "opencodex.approvalMode": {
           "type": "string",
           "enum": ["ask", "edits", "autonomous"],
           "default": "ask",
-          "description": "Controls whether file edits and commands require confirmation."
+          "description": "Controls whether file edits and commands require confirmation. 'Auto edits' still asks before destructive commands; 'Open access' runs everything without confirmation."
         },
         "opencodex.searxngUrl": {
           "type": "string",
+          "default": "http://localhost:8888",
+          "description": "Base URL for a SearXNG instance with JSON output enabled. Defaults to a local instance on port 8888; leave empty to disable web search."
+        },
+        "opencodex.extraFreeModels": {
+          "type": "string",
           "default": "",
-          "description": "Optional base URL for a SearXNG instance with JSON output enabled."
+          "description": "Comma-separated model IDs to treat as free for the selected provider, in addition to the ones detected automatically."
         }
       }
     }
@@ -102,7 +128,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "@types/vscode": "^1.96.0",
+    "@types/vscode": "^1.106.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
     "typescript": "^7.0.2"
