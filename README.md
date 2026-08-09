@@ -44,7 +44,6 @@ Providers are selected in Settings (`opencodex.provider`). Every provider speaks
 | **OpenCode** *(default)* | Optional | All IDs ending in `-free` (live catalog) | Anonymous. Key only for models that require one |
 | **OpenRouter** | Yes | All IDs ending in `:free` (live catalog) | `https://openrouter.ai/keys` · `OPENROUTER_API_KEY` |
 | **Groq** | Yes | Every model (live catalog; free tier covers all) | `https://console.groq.com/keys` · `GROQ_API_KEY` |
-| **Cerebras** | Yes | Known free tier (`llama-3.3-70b`) | `https://cloud.cerebras.ai` · `CEREBRAS_API_KEY` |
 | **Google Gemini** | Yes | Free-tier models (live catalog; 2.5/2.0 Flash, Pro, Gemma) | `https://aistudio.google.com/apikey` · `GEMINI_API_KEY` |
 | **Mistral** | Yes | Known free tier (Small, Nemo) | `https://console.mistral.ai/api-keys` · `MISTRAL_API_KEY` |
 | **Ollama** *(local)* | No | Everything installed locally | Run `ollama serve` · `http://localhost:11434/v1` |
@@ -52,7 +51,7 @@ Providers are selected in Settings (`opencodex.provider`). Every provider speaks
 - Cloud API keys are free to create but have rate limits; OpenCode works without a key (it is optional for models that require one), and the local providers have no key at all.
 - Keys are saved **per provider**: a key stored for Gemini is only ever sent to Gemini, so other providers are unaffected. A saved key wins over the environment variable. Keys are never written to `settings.json` or shown again after saving. The settings screen only reports that a key exists and offers a **Remove saved key** button.
 - The model picker only lists **text/chat** models the selected provider currently marks free. Image, vision, audio, speech, embedding, and rerank models are filtered out. Provider free catalogs change over time; reopening Settings refreshes the model list automatically as changes save.
-- Providers whose APIs expose pricing or free markers (OpenCode, OpenRouter) and providers whose entire catalog is free-tier (Groq) are detected live. Gemini's free tier is derived from its live catalog. For the remaining curated providers (Cerebras, Mistral), add new free models to the **Extra free model IDs** setting instead of waiting for a release.
+- Providers whose APIs expose pricing or free markers (OpenCode, OpenRouter) and providers whose entire catalog is free-tier (Groq) are detected live. Gemini's free tier is derived from its live catalog. For the remaining curated provider (Mistral), add new free models to the **Extra free model IDs** setting instead of waiting for a release.
 
 ## Features
 
@@ -95,7 +94,7 @@ Read the [SearXNG installation instructions](https://docs.searxng.org/admin/inst
 
 - VS Code **1.106.0** or newer
 - An internet connection to the chosen provider's API for the model catalog and completions
-- (Optional) A free API key for cloud providers such as OpenRouter, Groq, Cerebras, Gemini, or Mistral
+- (Optional) A free API key for cloud providers such as OpenRouter, Groq, Gemini, or Mistral
 - (Optional) A SearXNG instance with JSON output enabled for web search
 - (Optional) Ollama running locally for the local provider
 
@@ -103,7 +102,7 @@ Read the [SearXNG installation instructions](https://docs.searxng.org/admin/inst
 
 - Model availability depends on the active provider's free catalog; the picker is refreshed live and resets if your chosen model is removed.
 - Free-tier rate limits of the selected provider apply (OpenCode and local providers have no key or quota).
-- Cerebras and Mistral have a small curated free list (their APIs expose no free marker); new free models there can be added through the **Extra free model IDs** setting. All other providers resolve free models from their live catalog.
+- Mistral has a small curated free list (its API exposes no free marker); new free models there can be added through the **Extra free model IDs** setting. All other providers resolve free models from their live catalog.
 - Web search requires a user-provided SearXNG instance; no bundled search backend is included.
 - Restore points are created only for Git-tracked projects and only for newer responses.
 

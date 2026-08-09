@@ -9,6 +9,7 @@ import type { AppConfig, Conversation, ProviderModelGroup, TranscriptItem, WebMe
 import { MAX_PERSISTED_REASONING } from './types';
 import { conversationTitle, createTranscriptItem, errorMessage, friendlyError, humanToolName, normalizeApprovalMode, normalizeTranscriptItem, providerErrorMessage, shouldAutoContinue, toolTask } from './util';
 import { getWebviewHtml } from './webview';
+import { aggregateUsage, loadUsage, recordUsage } from './usage';
 
 type PlanState = {
   title: string;
@@ -84,6 +85,16 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   }
 
   async openSettings(): Promise<void> { return this.showSettings(); }
+
+  openUsage(): void {
+    this.view?.show?.(true);
+    this.post({ type: 'showUsage' });
+    this.sendUsage();
+  }
+
+  private sendUsage(): void {
+    this.post({ type: 'usage', ...aggregateUsage(loadUsage(this.context)) });
+  }
 
   private async showSettings(initialSetup = false): Promise<void> {
     const config = this.config();
@@ -182,6 +193,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'config', model: this.config().model, provider: this.config().provider, approvalMode: this.config().approvalMode });
       await this.refreshModels();
       await this.maybeShowFirstLaunchSettings();
+      this.sendUsage();
       return;
     }
     if (message.type === 'stop') {
@@ -281,6 +293,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     if (message.type === 'setKey' || message.type === 'requestSettings') return this.showSettings();
+    if (message.type === 'requestUsage') return this.openUsage();
     if (message.type === 'saveSettings') {
       try {
         const searxngUrl = message.searxngUrl.trim().replace(/\/$/, '');
@@ -572,6 +585,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       let finishReason = '';
       let stepCount = 0;
       let continuationCount = 0;
+      let liveInput = 0;
+      let liveOutput = 0;
       do {
         finishReason = '';
         const result = await agent.stream({
@@ -651,11 +666,24 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
             workStartedAt ||= Date.now();
             const first = stepCount++ === 0;
             this.post({ type: 'workPhase', conversationId, first });
+          } else if (part.type === 'finish-step') {
+            const usage = part.usage;
+            const input = usage?.inputTokens ?? 0;
+            const output = usage?.outputTokens ?? 0;
+            if (input || output) {
+              liveInput += input;
+              liveOutput += output;
+              this.post({ type: 'liveUsage', conversationId, model, provider: providerConfig.id, inputTokens: liveInput, outputTokens: liveOutput });
+            }
           } else if (part.type === 'error') {
             throw new Error(providerErrorMessage(part.error));
           } else if (part.type === 'finish') {
             finishReason = part.finishReason;
           }
+        }
+        const usage = await result.usage;
+        if (usage?.inputTokens || usage?.outputTokens) {
+          recordUsage(this.context, { model, provider: providerConfig.id, inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 });
         }
         if (finishReason === 'error') throw new Error('The model stopped because the provider reported a generation error.');
         if (finishReason === 'content-filter') throw new Error('The model stopped because the provider blocked the response.');
@@ -663,6 +691,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         continuationCount++;
         streamPrompt = `Continue the original coding request from exactly where you stopped. Do not mention this instruction, do not repeat prior text, and do not stop after describing the next action. Use tools to complete all remaining work, verify it, and only then give the concise final summary.\n\nOriginal request:\n${userText}\n\nWork shown so far:\n${answer.slice(-8_000)}`;
       } while (continuationCount < 2 && !run.controller.signal.aborted);
+      this.sendUsage();
       if (!answer.trim()) answer = '(No response)';
       if (reasoningBuffer.trim()) work.push({ kind: 'reasoning', text: reasoningBuffer + (reasoningTruncated ? '\n…(truncated)' : '') });
       const keptWork = work.slice(-80);
@@ -694,6 +723,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'generationError', conversationId, item: errorItem });
       }
     } finally {
+      // Stopped/interrupted responses are not counted, so drop their partial live tokens.
+      this.post({ type: 'liveUsage', conversationId, model: '', provider: '', inputTokens: 0, outputTokens: 0 });
       this.runs.delete(conversationId);
       this.post({ type: 'state', conversationId, running: false, label: '' });
       this.syncConversations(false);

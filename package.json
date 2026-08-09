@@ -2,7 +2,7 @@
   "name": "opencodex-agent",
   "displayName": "Opencodex",
   "description": "The hub for free AI agents",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -63,6 +63,10 @@
         "title": "Opencodex: Open Settings"
       },
       {
+        "command": "opencodex.usage",
+        "title": "Opencodex: Show Token Usage"
+      },
+      {
         "command": "opencodex.clear",
         "title": "Opencodex: New Chat"
       }
@@ -85,7 +89,7 @@
         },
         "opencodex.provider": {
           "type": "string",
-          "enum": ["opencode", "openrouter", "groq", "cerebras", "gemini", "mistral", "ollama"],
+          "enum": ["opencode", "openrouter", "groq", "gemini", "mistral", "ollama"],
           "default": "opencode",
           "description": "Free model provider to use. OpenCode works without a key; the others need an API key saved in Settings (or a matching environment variable)."
         },

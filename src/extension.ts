@@ -19,6 +19,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('opencodex.openChat', () => revealChat()),
     vscode.commands.registerCommand('opencodex.focus', () => revealChat()),
     vscode.commands.registerCommand('opencodex.settings', () => provider.openSettings()),
+    vscode.commands.registerCommand('opencodex.usage', () => provider.openUsage()),
     vscode.commands.registerCommand('opencodex.clear', () => provider.clear()),
   );
 }

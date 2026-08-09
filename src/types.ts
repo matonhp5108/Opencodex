@@ -17,7 +17,8 @@ export type WebMessage =
   | { type: 'removeApiKey'; provider: string }
   | { type: 'resetSettings' }
   | { type: 'openFile'; path: string }
-  | { type: 'retryMessage'; conversationId: string };
+  | { type: 'retryMessage'; conversationId: string }
+  | { type: 'requestUsage' };
 
 export type WorkItem = {
   kind: 'reasoning' | 'task' | 'plan';
@@ -60,6 +61,14 @@ export type ProviderModelGroup = {
 };
 
 export type ApprovalMode = 'ask' | 'edits' | 'autonomous';
+
+export type UsageRecord = {
+  model: string;
+  provider: string;
+  timestamp: number;
+  inputTokens: number;
+  outputTokens: number;
+};
 
 export interface AppConfig {
   model: string;

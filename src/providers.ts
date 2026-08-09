@@ -69,15 +69,6 @@ export const PROVIDERS: Record<string, Provider> = {
     apiKeyUrl: 'https://console.groq.com/keys',
     parseModels: GROQ_FREE,
   },
-  cerebras: {
-    id: 'cerebras',
-    name: 'Cerebras',
-    baseURL: 'https://api.cerebras.ai/v1',
-    needsApiKey: true,
-    apiKeyEnvVar: 'CEREBRAS_API_KEY',
-    apiKeyUrl: 'https://cloud.cerebras.ai',
-    freeModels: ['llama-3.3-70b'],
-  },
   gemini: {
     id: 'gemini',
     name: 'Google Gemini',
