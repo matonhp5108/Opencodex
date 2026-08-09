@@ -19,11 +19,21 @@ function isTextModel(id: string): boolean {
   return !NON_TEXT.test(id);
 }
 
+export type ModelEntry = { id: string; raw?: Record<string, unknown> };
+
+function modelEntries(body: unknown): ModelEntry[] {
+  const record = body as { data?: Array<Record<string, unknown> | null | undefined> };
+  const result: ModelEntry[] = [];
+  for (const item of record.data ?? []) {
+    if (!item || typeof item !== 'object') continue;
+    const id = typeof item.id === 'string' ? item.id.replace(/^models\//, '') : '';
+    if (id) result.push({ id, raw: item });
+  }
+  return result;
+}
+
 function modelIds(body: unknown): string[] {
-  const record = body as { data?: Array<{ id?: unknown }> };
-  return (record.data ?? [])
-    .map(item => (typeof item.id === 'string' ? item.id.replace(/^models\//, '') : ''))
-    .filter(Boolean);
+  return modelEntries(body).map(entry => entry.id);
 }
 
 const GROQ_FREE = (body: unknown): string[] => modelIds(body).sort();
@@ -40,16 +50,53 @@ function filterFreeModels(provider: Provider, ids: string[]): string[] {
   ))].sort();
 }
 
+export function isCompatibleModel(provider: Provider, id: string, entry?: ModelEntry, capabilities?: Map<string, Set<string>>): boolean {
+  if (!isTextModel(id)) return false;
+  if (provider.id === 'openrouter' && entry?.raw) {
+    const raw = entry.raw;
+    const parameters = raw.supported_parameters;
+    if (Array.isArray(parameters) && !parameters.includes('tools')) return false;
+    const outputs = (raw.architecture as { output_modalities?: unknown } | undefined)?.output_modalities;
+    if (Array.isArray(outputs) && !outputs.includes('text')) return false;
+  }
+  if (provider.id === 'ollama' && capabilities) {
+    const caps = capabilities.get(id) ?? capabilities.get(id.replace(/:latest$/, ''));
+    if (caps) return caps.has('tools') && caps.has('completion');
+  }
+  return true;
+}
+
+async function fetchOllamaCapabilities(baseURL: string): Promise<Map<string, Set<string>> | undefined> {
+  try {
+    const apiBase = baseURL.replace(/\/+$/, '').replace(/\/v1$/i, '');
+    const response = await fetch(`${apiBase}/api/tags`, { signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) return undefined;
+    const body = (await response.json().catch(() => null)) as { models?: Array<{ name?: unknown; model?: unknown; capabilities?: unknown }> } | null;
+    const models = body?.models;
+    if (!Array.isArray(models)) return undefined;
+    const map = new Map<string, Set<string>>();
+    for (const model of models) {
+      const caps = Array.isArray(model.capabilities)
+        ? new Set(model.capabilities.filter((cap): cap is string => typeof cap === 'string'))
+        : undefined;
+      if (!caps || caps.size === 0) continue;
+      for (const key of [model.name, model.model]) {
+        if (typeof key === 'string' && key) map.set(key.replace(/:latest$/, ''), caps);
+      }
+    }
+    return map.size > 0 ? map : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const PROVIDERS: Record<string, Provider> = {
   opencode: {
     id: 'opencode',
     name: 'OpenCode',
     baseURL: 'https://opencode.ai/zen/v1',
     needsApiKey: false,
-    acceptsApiKey: true,
-    apiKeyUrl: 'https://console.opencode.ai/',
     freeSuffix: '-free',
-    extraFree: ['big-pickle'],
   },
   openrouter: {
     id: 'openrouter',
@@ -138,11 +185,19 @@ export async function fetchProviderModels(provider: Provider, apiKey: string, ex
   } catch {
     throw new Error(`${provider.name} returned an unreadable response while listing models.`);
   }
-  let models = provider.parseModels ? provider.parseModels(body) : filterFreeModels(provider, modelIds(body));
+  const entries = modelEntries(body);
+  let models: string[];
+  if (provider.parseModels) {
+    models = provider.parseModels(body);
+  } else {
+    models = filterFreeModels(provider, entries.map(entry => entry.id));
+  }
   if (!models.length && provider.freeModels?.length) models = provider.freeModels;
-  if (!models.length && provider.isLocal) models = modelIds(body);
-  models = models.filter(isTextModel);
+  if (!models.length && provider.isLocal) models = entries.map(entry => entry.id);
+  const capabilities = provider.id === 'ollama' && provider.isLocal ? await fetchOllamaCapabilities(baseURL) : undefined;
+  const entryById = new Map(entries.map(entry => [entry.id, entry]));
+  models = models.filter(id => isCompatibleModel(provider, id, entryById.get(id), capabilities));
   if (extraFree.length) models = [...new Set([...models, ...extraFree])].sort();
-  if (!models.length) throw new Error(`${provider.name} currently lists no free models.`);
+  if (!models.length) throw new Error(`${provider.name} currently lists no compatible models.`);
   return models;
 }

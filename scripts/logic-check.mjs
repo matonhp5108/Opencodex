@@ -1,5 +1,5 @@
 // Sanity-check the configured-provider semantics against the real provider registry.
-import { listProviders } from '../src/providers.ts';
+import { isCompatibleModel, listProviders } from '../src/providers.ts';
 
 // Mirrors AgentViewProvider.providerConfigured: keyless providers always count,
 // cloud providers count once their key is saved (or present as an environment
@@ -22,6 +22,21 @@ const keys = { gemini: 'secret', openrouter: 'secret' };
 const savedBaseUrls = { [baseUrlKey('ollama')]: 'http://localhost:11434/v1' };
 
 assert(providerConfigured(byId.opencode, {}, {}) === true, 'opencode (keyless) always configured');
+assert((byId.opencode.acceptsApiKey ?? byId.opencode.needsApiKey) === false, 'opencode no longer accepts an API key');
+assert(byId.opencode.freeSuffix === '-free', 'opencode resolves its free tier live from the -free suffix');
+assert((byId.opencode.freeModels?.length ?? 0) === 0, 'opencode has no hardcoded model list');
+assert(byId.mistral.freeModels?.length > 0, 'mistral keeps a curated fallback (API exposes no free marker)');
+
+// compatibility filter (shared by all providers)
+const or = byId.openrouter;
+assert(isCompatibleModel(or, 'vendor/model:free', { raw: { supported_parameters: ['temperature', 'tools'], architecture: { output_modalities: ['text'] } } }) === true, 'openrouter: tools+text model passes');
+assert(isCompatibleModel(or, 'vendor/model:free', { raw: { supported_parameters: ['temperature'], architecture: { output_modalities: ['text'] } } }) === false, 'openrouter: model without tool support rejected');
+assert(isCompatibleModel(or, 'vendor/model:free', { raw: { supported_parameters: ['tools'], architecture: { output_modalities: ['image'] } } }) === false, 'openrouter: image-only output rejected');
+assert(isCompatibleModel(byId.ollama, 'llama3:8b', undefined, new Map([['llama3:8b', new Set(['completion', 'tools'])]])) === true, 'ollama: completion+tools model passes');
+assert(isCompatibleModel(byId.ollama, 'some-model', undefined, new Map([['some-model', new Set(['completion'])]])) === false, 'ollama: model without tools rejected');
+assert(isCompatibleModel(byId.ollama, 'some-model', undefined, undefined) === true, 'ollama: unknown capabilities fall back to pass');
+assert(isCompatibleModel(byId.opencode, 'deepseek-v4-flash-free', undefined, undefined) === true, 'opencode: -free model passes compatibility');
+assert(isCompatibleModel(byId.opencode, 'whisper-large-v3', undefined, undefined) === false, 'non-text model rejected everywhere');
 assert(providerConfigured(byId.ollama, {}, {}) === false, 'ollama (local) unconfigured without saved URL');
 assert(providerConfigured(byId.ollama, {}, savedBaseUrls) === true, 'ollama (local) configured once URL saved');
 assert(providerConfigured(byId.gemini, {}, {}) === false, 'gemini unconfigured without key');
@@ -51,7 +66,7 @@ assert(sorted.join(',') === 'gemini,ollama,opencode', 'default provider first, r
 
 // selected model is kept only when present in a fetched group
 const groups = [
-  { providerId: 'opencode', models: ['big-pickle'] },
+  { providerId: 'opencode', models: ['deepseek-v4-flash-free'] },
   { providerId: 'gemini', models: ['gemini-2.5-flash'] },
 ];
 assert(groups.some(g => g.models.includes('gemini-2.5-flash')) === true, 'selected model present -> kept');

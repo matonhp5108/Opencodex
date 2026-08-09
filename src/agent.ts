@@ -81,6 +81,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     this.apiKeys = keys;
     try {
       await this.context.secrets.delete('opencodex.apiKey');
+      await this.context.secrets.delete('opencodex.apiKey.opencode');
+      this.apiKeys.opencode = '';
     } catch {}
   }
 
@@ -316,7 +318,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           if (baseUrl && !/^https?:\/\//i.test(baseUrl)) throw new Error('Server URL must start with http:// or https://.');
           await this.context.globalState.update(`opencodex.baseUrl.${providerId}`, baseUrl || undefined);
         }
-        if (message.apiKey.trim()) {
+        if (message.apiKey.trim() && (provider.acceptsApiKey ?? provider.needsApiKey)) {
           await this.context.secrets.store(`opencodex.apiKey.${providerId}`, message.apiKey.trim());
           this.apiKeys[providerId] = message.apiKey.trim();
         }
@@ -723,7 +725,6 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'generationError', conversationId, item: errorItem });
       }
     } finally {
-      // Stopped/interrupted responses are not counted, so drop their partial live tokens.
       this.post({ type: 'liveUsage', conversationId, model: '', provider: '', inputTokens: 0, outputTokens: 0 });
       this.runs.delete(conversationId);
       this.post({ type: 'state', conversationId, running: false, label: '' });
@@ -772,7 +773,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     return {
       model: config.get<string>('model', ''),
       provider: provider.id,
-      apiKey: this.apiKeys[provider.id] || (provider.apiKeyEnvVar ? process.env[provider.apiKeyEnvVar] ?? '' : ''),
+      apiKey: this.providerApiKey(provider),
       baseUrl: this.providerBaseUrl(provider),
       maxSteps: config.get<number>('maxSteps', 20),
       approvalMode: normalizeApprovalMode(this.context.globalState.get<string>('opencodex.approvalMode', config.get<string>('approvalMode', 'ask'))),
@@ -790,6 +791,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   }
 
   private providerApiKey(provider: Provider): string {
+    if (!(provider.acceptsApiKey ?? provider.needsApiKey)) return '';
     return this.apiKeys[provider.id] || (provider.apiKeyEnvVar ? process.env[provider.apiKeyEnvVar] ?? '' : '');
   }
 

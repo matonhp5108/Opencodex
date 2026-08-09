@@ -33,7 +33,7 @@ Open a project, pick a provider and a free model, and describe what you want. Op
 
 5. Start a conversation.
 
-> **Note on models:** Opencodex does not have any control over which models are shown by the providers. Some models may be removed or incompatible with Opencodex. 
+> **Note on models:** Opencodex does not have any control over which models are shown by the providers. Some models may be removed or incompatible with Opencodex. The model picker filters every provider's catalog to models compatible with the agent (text output plus tool calling), using capability metadata where the provider exposes it (OpenRouter, Ollama) and a small curated fallback only for Mistral, whose API exposes no free marker.
 
 ## Model providers
 
@@ -41,14 +41,14 @@ Providers are selected in Settings (`opencodex.provider`). Every provider speaks
 
 | Provider | API key | Free models shown | Key location / env var |
 | --- | --- | --- | --- |
-| **OpenCode** *(default)* | Optional | All IDs ending in `-free` (live catalog) | Anonymous. Key only for models that require one |
+| **OpenCode** *(default)* | No | All IDs ending in `-free` (live catalog) | None |
 | **OpenRouter** | Yes | All IDs ending in `:free` (live catalog) | `https://openrouter.ai/keys` · `OPENROUTER_API_KEY` |
 | **Groq** | Yes | Every model (live catalog; free tier covers all) | `https://console.groq.com/keys` · `GROQ_API_KEY` |
 | **Google Gemini** | Yes | Free-tier models (live catalog; 2.5/2.0 Flash, Pro, Gemma) | `https://aistudio.google.com/apikey` · `GEMINI_API_KEY` |
 | **Mistral** | Yes | Known free tier (Small, Nemo) | `https://console.mistral.ai/api-keys` · `MISTRAL_API_KEY` |
 | **Ollama** *(local)* | No | Everything installed locally | Run `ollama serve` · `http://localhost:11434/v1` |
 
-- Cloud API keys are free to create but have rate limits; OpenCode works without a key (it is optional for models that require one), and the local providers have no key at all.
+- Cloud API keys are free to create but have rate limits; OpenCode and the local providers have no key at all.
 - Keys are saved **per provider**: a key stored for Gemini is only ever sent to Gemini, so other providers are unaffected. A saved key wins over the environment variable. Keys are never written to `settings.json` or shown again after saving. The settings screen only reports that a key exists and offers a **Remove saved key** button.
 - The model picker only lists **text/chat** models the selected provider currently marks free. Image, vision, audio, speech, embedding, and rerank models are filtered out. Provider free catalogs change over time; reopening Settings refreshes the model list automatically as changes save.
 - Providers whose APIs expose pricing or free markers (OpenCode, OpenRouter) and providers whose entire catalog is free-tier (Groq) are detected live. Gemini's free tier is derived from its live catalog. For the remaining curated provider (Mistral), add new free models to the **Extra free model IDs** setting instead of waiting for a release.
