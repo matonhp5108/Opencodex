@@ -81,7 +81,6 @@ That is enough to begin. API keys, Ollama, SkillsMP, and SearXNG are optional.
 - Restore Git-tracked files to the state captured after an agent response
 - Receive native completion, approval, and failure notifications
 - Review token usage by model and provider
-- Attach files and folders, and explicitly toggle active-file or selection context
 - Keep durable project decisions in `.opencodex/memory.md`
 
 ![Opencodex token usage grouped by model and provider](media/usage.png)
