@@ -1,143 +1,254 @@
 <p align="center">
-  <img src="media/icon.png" alt="Opencodex" width="120">
+  <img src="media/icon.png" alt="Opencodex" width="112">
 </p>
 
 <h1 align="center">Opencodex</h1>
-<h3 align="center">The hub for free AI coding</h3>
+<p align="center"><strong>A free, open-source coding agent inside VS Code.</strong></p>
+<p align="center">Start without an account or API key, connect another free provider, or run models locally with Ollama.</p>
 
-A standalone, Codex-style coding agent that runs entirely inside VS Code. Opencodex allows you to use **free** models from multiple providers to power your agent.
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=EvaanChowdhry.opencodex-agent"><img src="https://img.shields.io/badge/Install-VS_Code_Marketplace-007ACC?logo=visualstudiocode&amp;logoColor=white" alt="Install from the VS Code Marketplace"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=EvaanChowdhry.opencodex-agent"><img src="https://vsmarketplacebadges.dev/installs/EvaanChowdhry.opencodex-agent.svg" alt="VS Code Marketplace installs"></a>
+  <a href="https://github.com/matonhp5108/Opencodex/stargazers"><img src="https://img.shields.io/github/stars/matonhp5108/Opencodex?style=flat&amp;logo=github" alt="GitHub stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/matonhp5108/Opencodex" alt="MIT License"></a>
+</p>
 
-Open a project, pick a provider and a free model, and describe what you want. Opencodex works exactly like an agent like OpenAI Codex. The only difference is, Opencodex skips the "pay for more usage" bs and complex setups. Opencodex lets you use excellent free models from multiple providers right away, with no account or API key required to start.
+<p align="center">
+  <strong><a href="https://marketplace.visualstudio.com/items?itemName=EvaanChowdhry.opencodex-agent">Install from the VS Code Marketplace</a></strong>
+  ·
+  <a href="https://github.com/matonhp5108/Opencodex/issues">Report a bug or request a feature</a>
+</p>
 
-## Highlights
+![Opencodex reviewing a repository and working through a pinned plan inside VS Code](media/working.png)
 
-- **Free**: Uses each provider's live free-only model catalog. Only models currently marked free are offered.
-- **Plans first**: The agent can present an ordered plan of the main design aspects before doing work; it stays pinned at the top of the response while the work runs below.
-- **No account or API key required to start**: Opencodex has models that work anonymously out of the box; the first-launch screen is a simple one-time setup. Optional providers need a free API key configured in Settings.
-- **Local model support**: Run models on your own machine with Ollama. No cloud, no key.
-- **Codex-style agent loop**: A collapsible work panel shows each tool step, live activity, and streamed reasoning.
-- **Safe**: All agent paths are confined to the open workspace, `.env` and credential files are blocked, and file edits participate in editor undo.
-- **Skills from SkillsMP**: Search, preview, and install agent skills (SKILL.md packages) from the [SkillsMP marketplace](https://skillsmp.com) with a single request or from the **shop icon** beside Settings — no API key.
-- **Flexible approval modes**: Confirm every action, auto-approve edits (still confirms destructive commands), or use **Open access** to auto-approve edits and commands.
-- **Per-folder projects**: Every folder you open becomes a project with its own chat history; the sidebar always reflects the currently opened VS Code folder.
-- **Conversation management**: Switch, archive, and permanently delete conversations; Git restore points roll back tracked files to any agent response.
-- **Resilient streaming**: Up to five visible connection retries, animated streamed answers, and persistent red error messages instead of fake `Done.` responses.
+Opencodex brings a Codex-style agent loop to the editor you already use. Open a folder, choose a free model, and describe the outcome you want. The agent can inspect the repository, plan the work, edit files, run commands, and show every step as it happens.
 
-## Get started
+## Contents
 
-1. Install the `Opencodex` extension from the VS Code Marketplace.
+- [Why Opencodex](#why-opencodex)
+- [Quick start](#quick-start)
+- [What it can do](#what-it-can-do)
+- [Model providers](#model-providers)
+- [Safety and approvals](#safety-and-approvals)
+- [MCP, subagents, terminals, and memory](#mcp-subagents-terminals-and-memory)
+- [Skills marketplace](#skills-marketplace)
+- [Settings](#settings)
+- [Commands](#commands)
+- [Development](#development)
 
-2. Open a project folder and click the **O** icon in your tab bar (the buttons on the top right of your editor).
+## Why Opencodex
 
-3. Complete the first-launch settings screen. **OpenCode** is the default provider and needs no API key to start. To use another, configure its API key in Settings. SearXNG is optional; leave it blank to skip web search, or read the [SearXNG installation instructions](https://docs.searxng.org/admin/installation.html) for details on how to install it.
+- **Free to start:** OpenCode works anonymously out of the box. No Opencodex account or API key is required.
+- **Bring your own provider:** Switch between OpenCode, OpenRouter, Groq, Gemini, Mistral, and Ollama.
+- **Local models:** Use compatible models installed in Ollama without sending prompts to a cloud model provider.
+- **Visible agent work:** Follow plans, reasoning, tool activity, retries, and streamed answers from the sidebar.
+- **Workspace-aware:** Each folder gets its own project and conversation history.
+- **Built for recovery:** Editor undo and Git restore points make agent changes easier to inspect and roll back.
+- **Extensible with skills:** Discover, preview, and install `SKILL.md` packages from SkillsMP or GitHub.
+- **Your choice of control:** Confirm every action, auto-approve edits, or enable Open access.
 
-4. Select a free model from the live model picker below the composer.
+## Quick start
 
-5. Start a conversation.
+1. [Install Opencodex from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=EvaanChowdhry.opencodex-agent).
+2. Open a folder in VS Code.
+3. Click the **O** button in the editor title bar, or run **Opencodex: Open Chat** from the Command Palette.
+4. Complete the one-time setup. The default OpenCode provider needs no account or API key.
+5. Pick a free model below the composer and describe what you want to build.
 
-> **Note on models:** Opencodex does not have any control over which models are shown by the providers. Some models may be removed or incompatible with Opencodex. The model picker filters every provider's catalog to models compatible with the agent (text output plus tool calling), using capability metadata where the provider exposes it (OpenRouter, Ollama) and a small curated fallback only for Mistral, whose API exposes no free marker.
+That is enough to begin. API keys, Ollama, SkillsMP, and SearXNG are optional.
+
+## What it can do
+
+### Work like a coding agent
+
+- Read and search the active workspace
+- Create, edit, and delete files within the workspace boundary
+- Review proposed file diffs before they are applied in Ask mode
+- Run commands with configurable approvals
+- Keep named shell sessions alive for dev servers and interactive follow-up commands
+- Delegate bounded exploration, review, and implementation work to subagents
+- Use tools exposed by configured MCP servers
+- Present a pinned plan before beginning multi-step work
+- Stream answers while showing collapsible tool and reasoning details
+- Schedule one follow-up prompt and steer an active run
+- Retry interrupted model streams instead of silently claiming completion
+
+### Keep projects organized
+
+- Maintain separate chat history for every VS Code folder
+- Switch, archive, restore, and permanently delete conversations
+- Copy messages and review timestamps
+- Restore Git-tracked files to the state captured after an agent response
+- Receive native completion, approval, and failure notifications
+- Review token usage by model and provider
+- Attach files and folders, and explicitly toggle active-file or selection context
+- Keep durable project decisions in `.opencodex/memory.md`
+
+![Opencodex token usage grouped by model and provider](media/usage.png)
 
 ## Model providers
 
-Providers are selected in Settings (`opencodex.provider`). Every provider speaks the same OpenAI-compatible API, so switching is a one-click change. API keys are stored **per provider** in VS Code's secure secret storage. A key saved for one provider is never sent to another, and keys can also be supplied through an environment variable.
+Every provider uses the same agent experience. Keys are stored separately for each provider in VS Code SecretStorage and are never written to `settings.json`.
 
-| Provider | API key | Free models shown | Key location / env var |
+| Provider | API key | Models offered |
+| --- | --- | --- |
+| **OpenCode** *(default)* | No | Compatible models ending in `-free`, loaded from the live catalog |
+| **OpenRouter** | Yes | Compatible models ending in `:free`, loaded from the live catalog |
+| **Groq** | Yes | Compatible models in Groq's free tier |
+| **Google Gemini** | Yes | Compatible Gemini and Gemma free-tier models |
+| **Mistral** | Yes | Known free-tier models, with support for extra model IDs in Settings |
+| **Ollama** *(local)* | No | Compatible models installed on your machine |
+
+Cloud free tiers have their own rate limits and availability can change without an Opencodex release. Reopen Settings to refresh the model list. Opencodex filters out non-chat and non-tool-capable models where provider metadata allows it.
+
+## Safety and approvals
+
+Opencodex constrains its built-in file tools to the active workspace. Common credential files such as `.env` are blocked, and provider API keys are kept in VS Code's encrypted SecretStorage.
+
+| Mode | File edits | Commands | Destructive commands |
 | --- | --- | --- | --- |
-| **OpenCode** *(default)* | No | All IDs ending in `-free` (live catalog) | None |
-| **OpenRouter** | Yes | All IDs ending in `:free` (live catalog) | `https://openrouter.ai/keys` · `OPENROUTER_API_KEY` |
-| **Groq** | Yes | Every model (live catalog; free tier covers all) | `https://console.groq.com/keys` · `GROQ_API_KEY` |
-| **Google Gemini** | Yes | Free-tier models (live catalog; 2.5/2.0 Flash, Pro, Gemma) | `https://aistudio.google.com/apikey` · `GEMINI_API_KEY` |
-| **Mistral** | Yes | Known free tier (Small, Nemo) | `https://console.mistral.ai/api-keys` · `MISTRAL_API_KEY` |
-| **Ollama** *(local)* | No | Everything installed locally | Run `ollama serve` · `http://localhost:11434/v1` |
+| **Ask** | Confirm | Confirm | Confirm |
+| **Auto edits** | Automatic | Safe commands automatic | Confirm |
+| **Open access** | Automatic | Automatic | Automatic |
 
-- Cloud API keys are free to create but have rate limits; OpenCode and the local providers have no key at all.
-- Keys are saved **per provider**: a key stored for Gemini is only ever sent to Gemini, so other providers are unaffected. A saved key wins over the environment variable. Keys are never written to `settings.json` or shown again after saving. The settings screen only reports that a key exists and offers a **Remove saved key** button.
-- The model picker only lists **text/chat** models the selected provider currently marks free. Image, vision, audio, speech, embedding, and rerank models are filtered out. Provider free catalogs change over time; reopening Settings refreshes the model list automatically as changes save.
-- Providers whose APIs expose pricing or free markers (OpenCode, OpenRouter) and providers whose entire catalog is free-tier (Groq) are detected live. Gemini's free tier is derived from its live catalog. For the remaining curated provider (Mistral), add new free models to the **Extra free model IDs** setting instead of waiting for a release.
+In Ask mode, Opencodex opens a VS Code diff containing the proposed content before asking you to apply or reject it. Applied edits use VS Code workspace edits and participate in editor undo. Open access is intentionally powerful; use it only in workspaces where you are comfortable allowing unattended commands.
 
-## Features
+## MCP, subagents, terminals, and memory
 
-### Agent loop & interface
+Configure MCP servers in Settings as a JSON object. Both local stdio servers and remote HTTP/SSE servers are supported:
 
-- Per-folder projects with independent chat history, a project switcher in the sidebar, automatic switching when you open a different folder, and project deletion
-- Switchable, archivable project conversations with permanent deletion for archived conversations
-- Right-aligned user bubbles and Markdown-formatted assistant responses, with headings, lists, emphasis, links, inline code, and fenced code blocks
-- Collapsible Codex-style work panel with an animated loading sheen while the agent reasons or uses tools
-- Animated streamed answers with persistent work details for the current run
-- Pinned plan card at the top of each response when the agent plans first, listing the ordered main design aspects
-- Separate work lines for each agent-loop step, plus Markdown-formatted reasoning and work details
-- Automatic follow-to-bottom scrolling inside active thought and work panels, during streamed responses, and during tool activity
-- Scroll-aware jump-to-latest control with a live activity state
-- Message timestamps, copy actions, and Git-tree restore points for Git-tracked projects
-- One-item prompt scheduling with remove and `Steer` controls
-- Invisible continuation nudges when a model clearly stops before performing its next stated action
+```json
+{
+  "local-tools": {
+    "command": "npx",
+    "args": ["-y", "some-mcp-server"]
+  },
+  "remote-tools": {
+    "url": "https://example.com/mcp",
+    "headers": { "Authorization": "Bearer ${env:MCP_TOKEN}" }
+  }
+}
+```
 
+Each MCP tool is namespaced by server and follows the active approval mode. Connections are opened for the agent run and closed afterward.
 
-## Safety model
+The agent can delegate a bounded task to an **explorer**, **reviewer**, or **worker** subagent. Explorer and reviewer subagents are read-only; worker subagents can edit and verify through the same approval system as the parent.
 
-- All paths are constrained to the open workspace; files outside it cannot be read, written, or deleted.
-- `.env` and common credential files cannot be read or edited.
-- Approval modes can require every confirmation, auto-approve edits, or auto-approve edits and commands (**Open access**).
-- Edits use VS Code workspace edits and participate in editor undo.
-- In auto-edit mode, safe commands run without confirmation, but destructive commands (deletes, force pushes, discarding Git changes, wiping data) still ask.
-- In ask mode, commands and edits require confirmation.
-- In Open access mode, all commands and edits run without confirmation.
-- API keys for cloud providers are stored in VS Code's secure SecretStorage, never in workspace files.
+Named persistent shell sessions remain alive across tool calls and conversations until they are explicitly stopped or the extension closes. Project memory is stored in `.opencodex/memory.md`, loaded into future requests, and editable with **Opencodex: Open Project Memory** from the Command Palette.
 
-## Web search (optional)
+## Skills marketplace
 
-Set a SearXNG base URL in Settings to enable the agent's `web_search` tool. The server must allow JSON output (`format=json`).
+Opencodex can extend itself with `SKILL.md` packages from [SkillsMP](https://skillsmp.com) or a GitHub repository.
 
-- `http://localhost:8888` (the default) works when the extension host runs directly on your machine.
-- Dev Containers and remote workspaces need an address that can reach the host machine, for example its LAN address, or `host.docker.internal` where supported.
+![Browsing installable agent skills inside Opencodex](media/skills.png)
 
-Read the [SearXNG installation instructions](https://docs.searxng.org/admin/installation.html) for details on how to install it.
+- **Discover:** Search popular or recently updated skills from the shop button beside Settings.
+- **Preview:** Read a skill's instructions and inspect its GitHub source before installation.
+- **Install:** Add the selected skill to Opencodex's global extension storage after approval.
+- **Use anywhere:** Installed skills are available across workspaces and added to the agent's instructions from the next request.
 
-## Skills (SkillsMP)
+You can also ask directly: *“Find me a skill for web scraping”* or *“Install the planning skill from `owner/repository`.”*
 
-Opencodex can install new agent skills — SKILL.md packages — from the [SkillsMP marketplace](https://skillsmp.com) without leaving the chat:
+## Settings
 
-- **Browse the UI**: click the **shop icon** beside Settings to open the skill marketplace — search SkillsMP by keyword (top rated or recently updated) and/or browse any GitHub repo. Each result shows its description, stars, and author, with **Preview** (renders the SKILL.md) and **Install** buttons. Installed skills are listed at the top., e.g. *"find me a skill for web scraping"* (`skillsmp_search`). Results include a description, stars, author, and the GitHub source.
-- **Preview**: read a skill's SKILL.md from GitHub before installing it (`skillsmp_get_skill`).
-- **Install**: the agent downloads the skill folder into `.opencodex/skills/` in your workspace after your approval (`skillsmp_install_skill`). You can also point directly at any GitHub repository, e.g. *"install the planning skill from davila7/claude-code-templates"*.
-- **List**: see what a repository offers (`skillsmp_list_repo_skills`) or what is already installed (`skillsmp_list_installed`).
+Open the gear button in the Opencodex sidebar or run **Opencodex: Open Settings**.
 
-Installed skills are surfaced to the agent automatically (their name and description are added to its instructions), so they are ready to use from the next request. Search works anonymously — no SkillsMP API key is required.
+![Opencodex provider and agent settings](media/settings.png)
 
-## Requirements
+| Setting | Purpose |
+| --- | --- |
+| `opencodex.provider` | Active model provider |
+| `opencodex.model` | Selected compatible free model |
+| `opencodex.maxSteps` | Maximum tool-loop steps; `0` allows unlimited steps |
+| `opencodex.approvalMode` | Ask, Auto edits, or Open access |
+| `opencodex.searxngUrl` | Optional SearXNG instance used by the web-search tool |
+| `opencodex.mcpServers` | JSON configuration for stdio, HTTP, or SSE MCP servers |
+| `opencodex.extraFreeModels` | Additional comma-separated model IDs to show |
+| `opencodex.systemNotifications` | Native task, approval, and failure notifications |
 
-- VS Code **1.106.0** or newer
-- An internet connection to the chosen provider's API for the model catalog and completions
-- (Optional) A free API key for cloud providers such as OpenRouter, Groq, Gemini, or Mistral
-- (Optional) A SearXNG instance with JSON output enabled for web search
-- (Optional) An internet connection to skillsmp.com and github.com to search, preview, and install skills
-- (Optional) Ollama running locally for the local provider
+### Optional web search
 
-## Known limitations
+Set a SearXNG base URL to enable the `web_search` tool. The server must allow JSON output with `format=json`.
 
-- Model availability depends on the active provider's free catalog; the picker is refreshed live and resets if your chosen model is removed.
-- Free-tier rate limits of the selected provider apply (OpenCode and local providers have no key or quota).
-- Mistral has a small curated free list (its API exposes no free marker); new free models there can be added through the **Extra free model IDs** setting. All other providers resolve free models from their live catalog.
-- Web search requires a user-provided SearXNG instance; no bundled search backend is included.
-- Skills search and installation call skillsmp.com and github.com; unauthenticated GitHub API rate limits may apply to repository listings.
-- Restore points are created only for Git-tracked projects and only for newer responses.
+- Local VS Code: `http://localhost:8888`
+- Dev Containers or remote workspaces: use an address reachable from the extension host, such as the host LAN address or `host.docker.internal` where supported
+
+See the [SearXNG installation documentation](https://docs.searxng.org/admin/installation.html) for setup options.
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
-| `Opencodex: Open Chat` | Open the Opencodex chat view (the **O** icon in your tab bar). |
-| `Opencodex: Focus Chat` | Focus the Opencodex chat view. |
-| `Opencodex: Open Settings` | Open the settings screen. |
-| `Opencodex: New Chat` | Start a new conversation. |
+| `Opencodex: Open Chat` | Open Opencodex in the secondary sidebar |
+| `Opencodex: Focus Chat` | Focus the current chat |
+| `Opencodex: Open Settings` | Open provider and agent settings |
+| `Opencodex: Show Token Usage` | Review recent input and output token usage |
+| `Opencodex: Open Project Memory` | Open the active folder's durable memory file |
+| `Opencodex: Skill Marketplace` | Browse, preview, and install skills |
+| `Opencodex: New Chat` | Start a new conversation |
+| `Opencodex: Test System Notification` | Verify native notifications on the current platform |
 
-## Repository and support
+## Requirements
 
-- Bug reports and feedback: open a GitHub **Issue** and mention the extension version, your VS Code version, and the selected free model when possible.
-- Version history: check the repository **Releases** tab for per-version changes.
-- Contributions: open a pull request. The Development section below shows how to build and verify changes locally.
-- Model availability changes: each provider's free catalog changes over time; refresh the model picker for the current list.
+- VS Code **1.106.0** or newer
+- An internet connection for cloud providers
+- Optional: a free provider API key for OpenRouter, Groq, Gemini, or Mistral
+- Optional: Ollama for fully local models
+- Optional: SearXNG for web search
+
+## Development
+
+```bash
+git clone https://github.com/matonhp5108/Opencodex.git
+cd Opencodex
+npm install
+npm run check
+npm run build
+```
+
+Open the folder in VS Code and press `F5` to launch an Extension Development Host.
+
+```bash
+npm run package
+```
+
+The package command type-checks the project, builds the extension, and creates a `.vsix` with `vsce`.
+
+## Known limitations
+
+- Free-model catalogs and rate limits are controlled by each provider.
+- Mistral does not expose a free-model marker, so its built-in list is curated.
+- Web search requires a user-provided SearXNG instance.
+- Skills search and installation use SkillsMP and GitHub; unauthenticated GitHub API limits may apply.
+- Restore points cover Git-tracked files and are available only for newer responses that captured a Git state.
+- Persistent terminal sessions use piped shells rather than a full PTY, so full-screen terminal applications are not supported.
+- MCP authentication is configured through server headers or environment variables; interactive OAuth is not yet included.
+
+## Support and contributing
+
+Bug reports and feature requests are welcome in [GitHub Issues](https://github.com/matonhp5108/Opencodex/issues). Include the Opencodex version, VS Code version, provider, and selected model when reporting model-specific problems.
+
+Pull requests are welcome. Please run `npm run check` and `npm run build` before submitting changes.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE)
+
+---
+
+<p align="center">
+  <sub>You made it to the end of the README. Here is your reward:</sub>
+</p>
+
+```
+  ██████╗    ██████╗   ██╗  ██╗ 
+ ██╔═══██╗  ██╔════╝   ╚██╗██╔╝ 
+ ██║   ██║  ██║         ╚███╔╝  
+ ██║   ██║  ██║         ██╔██╗  
+ ╚██████╔╝  ╚██████╗   ██╔╝ ██╗ 
+  ╚═════╝    ╚═════╝   ╚═╝  ╚═╝ 
+```
+
+<p align="center">
+  <sub><strong>Opencodex</strong> - keep building.</sub>
+</p>

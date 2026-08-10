@@ -45,3 +45,10 @@ for (const [id, expected] of cases) {
 }
 if (failed) throw new Error(`${failed} filter case(s) failed`);
 console.log(`text filter: ${cases.length} cases OK`);
+
+if (raw.includes('Toggle active file context')) throw new Error('active-file context chip is still present');
+if (!raw.includes('projectIndicatorName.textContent=editorContext.activeFile||projectIndicatorFolder')) {
+  throw new Error('project indicator does not prefer the active file path');
+}
+if (!raw.includes('includeActiveFile:true')) throw new Error('active-file context is not always enabled');
+console.log('active-file context UI: path indicator and always-on delivery OK');

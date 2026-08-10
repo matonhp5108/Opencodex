@@ -1,17 +1,22 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { ToolLoopAgent, isLoopFinished, isStepCount } from 'ai';
 import { captureGitTree, isGitTrackedWorkspace, restoreGitTree } from './git';
 import { fetchProviderModels, getProvider, listProviders, type Provider } from './providers';
 import { installSkillFromRepository, listInstalledSkills, listRepositorySkills, readSkillMarkdown, resolveInstallPath, sanitizeSkillName, searchSkills, skillsPromptBlock, uninstallSkill, SKILL_FILE_NAMES, SKILLS_SUBDIR } from './skills';
 import { buildTools } from './tools';
-import type { AppConfig, Conversation, Project, ProviderModelGroup, TranscriptItem, WebMessage, WorkItem } from './types';
-import { MAX_PERSISTED_REASONING } from './types';
-import { conversationTitle, createTranscriptItem, errorMessage, friendlyError, humanToolName, normalizeApprovalMode, normalizeTranscriptItem, pathInside, providerErrorMessage, shouldAutoContinue, toolTask, truncate } from './util';
+import type { AppConfig, ComposerContext, Conversation, Project, ProviderModelGroup, TranscriptItem, WebMessage, WorkItem } from './types';
+import { MAX_FILE_BYTES, MAX_PERSISTED_REASONING } from './types';
+import { conversationTitle, createTranscriptItem, errorMessage, friendlyError, humanToolName, isSecret, normalizeApprovalMode, normalizeTranscriptItem, pathInside, providerErrorMessage, shouldAutoContinue, toolTask, truncate } from './util';
 import { getWebviewHtml } from './webview';
 import { systemNotify } from './notifications';
 import { aggregateUsage, loadUsage, recordUsage } from './usage';
+import { connectMcpServers, parseMcpServers, type McpConnection } from './mcp';
+import { TerminalManager } from './terminal';
+import { MEMORY_RELATIVE_PATH, openProjectMemory, readProjectMemory, writeProjectMemory } from './memory';
 
 type PlanState = {
   title: string;
@@ -58,15 +63,18 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   private activeProjectId = '';
   private loaded = false;
   private runs = new Map<string, ActiveRun>();
-  private queue: { text: string; conversationId: string }[] = [];
+  private queue: { text: string; conversationId: string; context?: ComposerContext; promptContext?: string }[] = [];
   private apiKeys: Record<string, string> = {};
   private persistChain: Promise<void> = Promise.resolve();
   private notifySeq = 0;
   private pendingNotifies = new Map<number, (choice: 'ok' | 'secondary' | 'cancel') => void>();
+  private readonly terminals = new TerminalManager();
 
   constructor(private readonly context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => this.onWorkspaceFoldersChanged()),
+      vscode.window.onDidChangeActiveTextEditor(() => this.sendEditorContext()),
+      vscode.window.onDidChangeTextEditorSelection(() => this.sendEditorContext()),
     );
   }
 
@@ -142,6 +150,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     this.view?.show?.(true);
     this.post({ type: 'showUsage' });
     this.sendUsage();
+  }
+
+  async openMemory(): Promise<void> {
+    const root = this.workspaceRoot();
+    if (!root) {
+      void vscode.window.showInformationMessage('Open a folder or workspace first.');
+      return;
+    }
+    await openProjectMemory(root);
   }
 
   private sendUsage(): void {
@@ -221,6 +238,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       approvalMode: config.approvalMode,
       searxngUrl: config.searxngUrl,
       systemPrompt: config.systemPrompt,
+      mcpServers: config.mcpServers,
       extraFreeModels: config.extraFreeModels.join(', '),
       provider: config.provider,
       providers: listProviders().map(provider => ({ id: provider.id, name: provider.name, needsApiKey: provider.needsApiKey, acceptsApiKey: provider.acceptsApiKey ?? provider.needsApiKey, apiKeyEnvVar: provider.apiKeyEnvVar, apiKeyUrl: provider.apiKeyUrl, isLocal: Boolean(provider.isLocal), baseUrl: this.providerBaseUrl(provider) })),
@@ -239,6 +257,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
   clear(): void {
     this.newConversation();
+  }
+
+  dispose(): void {
+    this.terminals.dispose();
+    this.disposePendingNotifies();
   }
 
   private loadProjects(): void {
@@ -417,6 +440,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       await this.refreshModels();
       await this.maybeShowFirstLaunchSettings();
       this.sendUsage();
+      this.sendEditorContext();
       return;
     }
     if (message.type === 'stop') {
@@ -643,6 +667,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       try {
         const searxngUrl = message.searxngUrl.trim().replace(/\/$/, '');
         if (searxngUrl && !/^https?:\/\//i.test(searxngUrl)) throw new Error('SearXNG URL must start with http:// or https://.');
+        parseMcpServers(message.mcpServers ?? '{}');
         const rawMaxSteps = Number(message.maxSteps);
         const maxSteps = rawMaxSteps === 0 ? 0 : Math.max(1, Math.min(50, Math.round(rawMaxSteps) || 20));
         const providerId = listProviders().some(provider => provider.id === message.provider) ? message.provider : 'opencode';
@@ -653,6 +678,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         await this.context.globalState.update('opencodex.approvalMode', normalizeApprovalMode(message.approvalMode));
         await this.context.globalState.update('opencodex.searxngUrl', searxngUrl);
         await this.context.globalState.update('opencodex.systemPrompt', message.systemPrompt ?? '');
+        await this.context.globalState.update('opencodex.mcpServers', message.mcpServers?.trim() || '{}');
         await this.context.globalState.update('opencodex.onlyDefaultModels', Boolean(message.onlyDefaultModels));
         await this.context.globalState.update('opencodex.confirmDelete', message.confirmDelete !== false);
         await this.context.globalState.update('opencodex.setupComplete', true);
@@ -691,6 +717,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       await this.context.globalState.update('opencodex.approvalMode', 'ask');
       await this.context.globalState.update('opencodex.searxngUrl', undefined);
       await this.context.globalState.update('opencodex.systemPrompt', undefined);
+      await this.context.globalState.update('opencodex.mcpServers', undefined);
       await this.context.globalState.update('opencodex.onlyDefaultModels', undefined);
       await this.context.globalState.update('opencodex.confirmDelete', undefined);
       for (const provider of listProviders()) {
@@ -719,6 +746,33 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       } catch (error) {
         vscode.window.showErrorMessage(errorMessage(error));
       }
+      return;
+    }
+    if (message.type === 'chooseContext') {
+      const root = this.workspaceRoot();
+      if (!root) return;
+      const chosen = await vscode.window.showOpenDialog({
+        defaultUri: root,
+        canSelectFiles: true,
+        canSelectFolders: true,
+        canSelectMany: true,
+        openLabel: 'Add context',
+      });
+      const attachments = [];
+      for (const uri of chosen ?? []) {
+        if (!pathInside(root.fsPath, uri.fsPath)) continue;
+        const stat = await vscode.workspace.fs.stat(uri);
+        attachments.push({
+          kind: (stat.type & vscode.FileType.Directory) !== 0 ? 'folder' : 'file',
+          path: path.relative(root.fsPath, uri.fsPath),
+        });
+      }
+      this.post({ type: 'contextAttachments', attachments });
+      return;
+    }
+    if (message.type === 'openMemory') {
+      const root = this.workspaceRoot();
+      if (root) await openProjectMemory(root);
       return;
     }
     if (message.type === 'revealInOS') {
@@ -777,10 +831,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         if (!active) return;
         conversationId = active.id;
       }
+      const root = this.workspaceRoot();
+      const promptContext = root ? await this.composerContextBlock(root, message.context) : '';
       if (this.runs.has(conversationId) || this.runs.size >= MAX_CONCURRENT_RUNS) {
-        this.enqueue(message.text.trim(), conversationId);
+        this.enqueue(message.text.trim(), conversationId, message.context, promptContext);
       } else {
-        void this.run(message.text.trim(), conversationId);
+        void this.run(message.text.trim(), conversationId, undefined, undefined, message.context, promptContext);
       }
       return;
     }
@@ -801,9 +857,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private enqueue(text: string, conversationId: string): void {
+  private enqueue(text: string, conversationId: string, context?: ComposerContext, promptContext?: string): void {
     this.queue = this.queue.filter(entry => entry.conversationId !== conversationId);
-    this.queue.push({ text, conversationId });
+    this.queue.push({ text, conversationId, context, promptContext });
     this.postQueued(conversationId);
   }
 
@@ -812,7 +868,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: 'queuedPrompt', conversationId, prompt: entry?.text ?? null });
   }
 
-  private async run(userText: string, conversationId: string, resume?: { work?: WorkItem[]; errorText?: string }, carryTree?: string): Promise<void> {
+  private async run(userText: string, conversationId: string, resume?: { work?: WorkItem[]; errorText?: string }, carryTree?: string, composerContext?: ComposerContext, preparedPromptContext?: string): Promise<void> {
     const root = this.workspaceRoot();
     if (!root) {
       this.post({ type: 'error', text: 'Open a folder or workspace first.' });
@@ -823,6 +879,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'error', text: 'Open a folder or workspace first.' });
       return;
     }
+    const promptContext = resume ? '' : preparedPromptContext ?? await this.composerContextBlock(root, composerContext);
 
     let conversation = project.conversations.find(item => item.id === conversationId);
     if (!conversation) {
@@ -856,6 +913,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     let workStartedAt = 0;
     let planItem: WorkItem | undefined;
     let planState: PlanState | undefined;
+    let mcpConnection: McpConnection | undefined;
     const describePlan = (): string => {
       const current = planState;
       if (!current) return 'No plan yet: call the plan tool with title and steps to create one.';
@@ -945,26 +1003,92 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
       await this.ensureGlobalSkills();
       const skillBlock = await skillsPromptBlock(this.skillsRoot());
+      const projectMemory = await readProjectMemory(root);
+      mcpConnection = await connectMcpServers(
+        this.config().mcpServers,
+        root.fsPath,
+        (title, detail) => this.approve('command', title, detail),
+      );
       const instructions = [
         this.systemPrompt(root),
+        projectMemory ? `Durable project memory from ${MEMORY_RELATIVE_PATH}:\n${projectMemory}` : '',
         `- Skills from the SkillsMP marketplace can be installed on request. Use skillsmp_search to find one, skillsmp_get_skill to preview it, and skillsmp_install_skill (it asks the user for approval) to add it to your global skills folder. Installed skills are available to the agent from the next request on; read their SKILL.md before applying them.`,
+        mcpConnection.instructions.length ? `Connected MCP server instructions:\n${mcpConnection.instructions.join('\n')}` : '',
+        mcpConnection.errors.length ? `Some configured MCP servers could not connect:\n- ${mcpConnection.errors.join('\n- ')}` : '',
         skillBlock,
       ].filter(Boolean).join('\n\n');
+      const memoryAccess = {
+        path: MEMORY_RELATIVE_PATH,
+        read: () => readProjectMemory(root),
+        write: async (content: string, reason?: string) => {
+          const before = await readProjectMemory(root);
+          await this.reviewEdit(MEMORY_RELATIVE_PATH, before, content, reason ?? 'Store durable project context for future conversations.');
+          await writeProjectMemory(root, content);
+        },
+      };
+
+      const delegate = async (role: 'explorer' | 'reviewer' | 'worker', task: string, context?: string): Promise<string> => {
+        const subagentTools = buildTools({
+          root,
+          skillsDir: this.skillsRoot(),
+          config: () => this.config(),
+          approve: (kind, title, detail, destructive) => this.approve(kind, title, detail, destructive),
+          reviewEdit: (filePath, before, after, reason, destructive) => this.reviewEdit(filePath, before, after, reason, destructive),
+          post: message => this.post(message),
+          resolvePath: filePath => this.resolveWorkspacePath(filePath),
+          describePlan: () => 'Subagents do not publish a parent plan. Work directly on the assigned task.',
+          abortSignal: run.controller.signal,
+          terminals: this.terminals,
+          memory: memoryAccess,
+        });
+        if (role !== 'worker') {
+          for (const name of ['write_file', 'replace_text', 'delete_file', 'run_command', 'terminal_start', 'terminal_write', 'terminal_stop', 'memory_update', 'skillsmp_install_skill']) delete subagentTools[name];
+        }
+        const roleInstruction = role === 'explorer'
+          ? 'Research the repository read-only. Return findings with precise file paths and line references.'
+          : role === 'reviewer'
+            ? 'Review independently and read-only. Look for correctness, regressions, security issues, and missing verification. Return only actionable findings or state that none were found.'
+            : 'Complete the bounded implementation or verification task. Inspect before editing, preserve unrelated changes, and verify the result.';
+        const subagent = new ToolLoopAgent({
+          model: provider(model),
+          maxRetries: 3,
+          instructions: `${this.systemPrompt(root)}\n\nYou are a ${role} subagent. ${roleInstruction}\nDo not delegate further.`,
+          tools: { ...subagentTools, ...(role === 'worker' ? mcpConnection?.tools : {}) },
+          stopWhen: isStepCount(maxSteps === 0 ? 12 : Math.max(2, Math.min(12, maxSteps))),
+        });
+        const result = await subagent.generate({
+          prompt: `${task.trim()}${context?.trim() ? `\n\nContext from the parent agent:\n${context.trim()}` : ''}`,
+          abortSignal: run.controller.signal,
+        });
+        if (result.usage?.inputTokens || result.usage?.outputTokens) {
+          recordUsage(this.context, { model, provider: providerConfig.id, inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0 });
+        }
+        return result.text.trim() || '(Subagent completed without a text response.)';
+      };
+
+      const agentTools = {
+        ...buildTools({
+          root,
+          skillsDir: this.skillsRoot(),
+          config: () => this.config(),
+          approve: (kind, title, detail, destructive) => this.approve(kind, title, detail, destructive),
+          reviewEdit: (filePath, before, after, reason, destructive) => this.reviewEdit(filePath, before, after, reason, destructive),
+          post: message => this.post(message),
+          resolvePath: filePath => this.resolveWorkspacePath(filePath),
+          describePlan,
+          abortSignal: run.controller.signal,
+          terminals: this.terminals,
+          delegate,
+          memory: memoryAccess,
+        }),
+        ...mcpConnection.tools,
+      };
 
       const agent = new ToolLoopAgent({
         model: provider(model),
         maxRetries: 4,
         instructions,
-        tools: buildTools({
-          root,
-          skillsDir: this.skillsRoot(),
-          config: () => this.config(),
-          approve: (kind, title, detail, destructive) => this.approve(kind, title, detail, destructive),
-          post: message => this.post(message),
-          resolvePath: filePath => this.resolveWorkspacePath(filePath),
-          describePlan,
-          abortSignal: run.controller.signal,
-        }),
+        tools: agentTools,
         stopWhen: maxSteps === 0 ? isLoopFinished() : isStepCount(maxSteps),
       });
 
@@ -995,8 +1119,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           .map(item => `${item.role.toUpperCase()}: ${item.text}`)
           .join('\n\n');
         streamPrompt = recent
-          ? `Previous conversation:\n${recent}\n\nCurrent request:\n${userText}`
-          : userText;
+          ? `Previous conversation:\n${recent}\n\nCurrent request:\n${userText}${promptContext}`
+          : `${userText}${promptContext}`;
       }
       let answer = '';
       let finishReason = '';
@@ -1144,6 +1268,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         systemNotify(this.context, { subtitle: 'Task failed', message: notificationSummary(message) || conversation.title, kind: 'attention' });
       }
     } finally {
+      await mcpConnection?.close();
       this.post({ type: 'liveUsage', conversationId, model: '', provider: '', inputTokens: 0, outputTokens: 0 });
       this.runs.delete(conversationId);
       this.post({ type: 'state', conversationId, running: false, label: '' });
@@ -1153,7 +1278,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       if (next && this.runs.size < MAX_CONCURRENT_RUNS) {
         this.queue = this.queue.filter(entry => entry !== next);
         this.postQueued(next.conversationId);
-        void this.run(next.text, next.conversationId, undefined, carriedGitTree);
+        void this.run(next.text, next.conversationId, undefined, carriedGitTree, next.context, next.promptContext);
       } else if (own) {
         this.postQueued(conversationId);
       }
@@ -1167,6 +1292,34 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     systemNotify(this.context, { subtitle: 'Approval needed', message: title, kind: 'attention' });
     const choice = await this.prompt(title, detail, { ok: 'Allow', cancel: 'Deny', danger: destructive });
     if (choice !== 'ok') throw new Error('User denied this action.');
+  }
+
+  private async reviewEdit(filePath: string, before: string, after: string, reason: string, destructive = false): Promise<void> {
+    const mode = this.config().approvalMode;
+    if (mode === 'autonomous' || (mode === 'edits' && !destructive)) return;
+    const directory = await mkdtemp(path.join(tmpdir(), 'opencodex-review-'));
+    const safeBase = (path.basename(filePath) || 'change.txt').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const beforePath = path.join(directory, `before-${safeBase}`);
+    const afterPath = path.join(directory, `proposed-${safeBase}`);
+    await Promise.all([writeFile(beforePath, before), writeFile(afterPath, after)]);
+    try {
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        vscode.Uri.file(beforePath),
+        vscode.Uri.file(afterPath),
+        `${filePath} — proposed Opencodex change`,
+        { preview: true },
+      );
+      systemNotify(this.context, { subtitle: 'Edit review needed', message: filePath, kind: 'attention' });
+      const choice = await this.prompt(
+        destructive ? `Review deletion of ${filePath}` : `Review proposed edit to ${filePath}`,
+        `${reason}\n\nThe proposed diff is open in the editor. Apply it?`,
+        { ok: destructive ? 'Delete' : 'Apply', cancel: 'Reject', danger: destructive },
+      );
+      if (choice !== 'ok') throw new Error('User rejected the proposed edit.');
+    } finally {
+      setTimeout(() => { void rm(directory, { recursive: true, force: true }); }, 30_000);
+    }
   }
 
   private async prompt(title: string, detail: string, options: { ok?: string; secondary?: string; cancel?: string; danger?: boolean } = {}): Promise<'ok' | 'secondary' | 'cancel'> {
@@ -1222,6 +1375,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       approvalMode: normalizeApprovalMode(this.context.globalState.get<string>('opencodex.approvalMode', config.get<string>('approvalMode', 'ask'))),
       searxngUrl: this.context.globalState.get<string>('opencodex.searxngUrl', config.get<string>('searxngUrl', '')),
       systemPrompt: this.context.globalState.get<string>('opencodex.systemPrompt', config.get<string>('systemPrompt', '')),
+      mcpServers: this.context.globalState.get<string>('opencodex.mcpServers', config.get<string>('mcpServers', '{}')),
       extraFreeModels: (config.get<string>('extraFreeModels', '') ?? '').split(',').map(item => item.trim()).filter(Boolean),
       onlyDefaultModels: this.context.globalState.get<boolean>('opencodex.onlyDefaultModels', true),
     };
@@ -1271,15 +1425,65 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: 'models', groups, selected, defaultProvider: defaultProvider.id, onlyDefaultModels: config.onlyDefaultModels });
   }
 
-  private systemPrompt(root: vscode.Uri): string {
+  private sendEditorContext(): void {
+    const root = this.workspaceRoot();
     const editor = vscode.window.activeTextEditor;
     const editorPath = editor?.document.uri.fsPath ?? '';
-    const active = editor && pathInside(root.fsPath, editorPath)
-      ? path.relative(root.fsPath, editorPath)
-      : '(none)';
-    const selection = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection).slice(0, 6000) : '';
-    const base = `You are Opencodex, an autonomous coding agent inside VS Code. Work carefully and persist until the request is complete.\n\nUser OS: ${userOsName()}\nWorkspace: ${root.fsPath}\nActive file: ${active}\n${selection ? `Selected text:\n${selection}\n` : ''}\nRules:\n- For non-trivial tasks, call the plan tool first to present the main design aspects; the plan is shown as a floating card at the top of the chat with the currently executing step highlighted and completed steps checked off.
-The plan tool is stateful: every call is merged with the current plan and its result always returns the complete current plan to you, so you always know its exact state and can update it accordingly. Steps NEVER advance automatically: after finishing a step, re-call the plan tool with activeStep (0-based index of the step you are now working on) and doneSteps (the indices of the steps you just finished). Previously completed steps stay checked automatically, so never re-send the whole list - pass steps and title again only when you are creating or explicitly rewriting the plan.\n- Inspect relevant files before editing.\n- Use workspace-relative paths only.\n- Never attempt to read or modify .env files, secrets, credentials, or files outside the workspace.\n- Make focused edits and preserve unrelated user changes.\n- Use replace_text for small edits, write_file for new files or complete rewrites, and delete_file instead of shell commands when removing files.\n- Run relevant checks when practical.\n- Do not narrate plans, intentions, or tool progress in the visible answer; the interface already shows work status.\n- Do not claim success until verification finishes.\n- End with only a concise result summary and tests.`;
+    const inside = Boolean(root && editor && pathInside(root.fsPath, editorPath));
+    const selection = inside && editor && !editor.selection.isEmpty ? editor.selection : undefined;
+    this.post({
+      type: 'editorContext',
+      activeFile: inside && root ? path.relative(root.fsPath, editorPath) : '',
+      hasSelection: Boolean(selection),
+      selectionLines: selection ? `${selection.start.line + 1}-${selection.end.line + 1}` : '',
+    });
+  }
+
+  private async composerContextBlock(root: vscode.Uri, context?: ComposerContext): Promise<string> {
+    const sections: string[] = [];
+    const seen = new Set<string>();
+    const editor = vscode.window.activeTextEditor;
+    const editorPath = editor?.document.uri.fsPath ?? '';
+    const editorInside = Boolean(editor && pathInside(root.fsPath, editorPath));
+    const requestedFile = context?.activeFile?.replace(/\\/g, '/').replace(/^\.\//, '');
+    const editorRelative = editorInside ? path.relative(root.fsPath, editorPath).replace(/\\/g, '/') : '';
+    const editorMatchesRequest = Boolean(editor && editorInside && (!requestedFile || requestedFile === editorRelative));
+    if (editor && editorMatchesRequest && context?.includeSelection !== false && !editor.selection.isEmpty) {
+      const relative = path.relative(root.fsPath, editorPath);
+      const selected = editor.document.getText(editor.selection).slice(0, 12_000);
+      sections.push(`Selected code from ${relative}:${editor.selection.start.line + 1}-${editor.selection.end.line + 1}:\n\`\`\`\n${selected}\n\`\`\``);
+    }
+    if (context?.includeActiveFile !== false && (requestedFile || editorRelative)) {
+      const relative = requestedFile || editorRelative;
+      if (!isSecret(relative)) {
+        const content = editor && editorMatchesRequest
+          ? editor.document.getText()
+          : new TextDecoder().decode(await vscode.workspace.fs.readFile(this.resolveWorkspacePath(relative)));
+        sections.push(`Active file ${relative} (included via the active-file context control):\n\`\`\`\n${content.slice(0, 30_000)}\n\`\`\``);
+        seen.add(relative);
+      }
+    }
+    for (const attachment of (context?.attachments ?? []).slice(0, 16)) {
+      const relative = attachment.path.replace(/\\/g, '/').replace(/^\.\//, '');
+      if (!relative || seen.has(relative) || isSecret(relative)) continue;
+      const uri = this.resolveWorkspacePath(relative);
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (attachment.kind === 'folder' || (stat.type & vscode.FileType.Directory) !== 0) {
+        sections.push(`Attached folder: ${relative}. Inspect only the relevant files inside it.`);
+      } else if (stat.size <= MAX_FILE_BYTES) {
+        const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)).slice(0, 30_000);
+        sections.push(`Attached file ${relative}:\n\`\`\`\n${content}\n\`\`\``);
+      } else {
+        sections.push(`Attached file: ${relative} (${stat.size} bytes; use read/search tools selectively).`);
+      }
+      seen.add(relative);
+    }
+    return sections.length ? `\n\nEditor context explicitly included by the user:\n\n${sections.join('\n\n')}` : '';
+  }
+
+  private systemPrompt(root: vscode.Uri): string {
+    const base = `You are Opencodex, an autonomous coding agent inside VS Code. Work carefully and persist until the request is complete.\n\nUser OS: ${userOsName()}\nWorkspace: ${root.fsPath}\nRules:\n- For non-trivial tasks, call the plan tool first to present the main design aspects; the plan is shown as a floating card at the top of the chat with the currently executing step highlighted and completed steps checked off.
+  The plan tool is stateful: every call is merged with the current plan and its result always returns the complete current plan to you, so you always know its exact state and can update it accordingly. Steps NEVER advance automatically: after finishing a step, re-call the plan tool with activeStep (0-based index of the step you are now working on) and doneSteps (the indices of the steps you just finished). Previously completed steps stay checked automatically, so never re-send the whole list - pass steps and title again only when you are creating or explicitly rewriting the plan.\n- Inspect relevant files before editing.\n- Use workspace-relative paths only.\n- Never attempt to read or modify .env files, secrets, credentials, or files outside the workspace.\n- Make focused edits and preserve unrelated user changes.\n- Use replace_text for small edits, write_file for new files or complete rewrites, and delete_file instead of shell commands when removing files.\n- Run relevant checks when practical.\n- Use memory_read when durable project context may matter. Use memory_update only for stable decisions, conventions, or explicit user preferences; never store secrets or transient task state.\n- Use delegate_task for bounded research, review, or focused work that benefits from a separate context window.\n- Use persistent terminal tools for interactive or long-running processes and reuse existing named sessions.\n- Do not narrate plans, intentions, or tool progress in the visible answer; the interface already shows work status.\n- Do not claim success until verification finishes.\n- End with only a concise result summary and tests.`;
     const custom = this.config().systemPrompt.trim();
     return custom ? `${base}\n\n${custom}` : base;
   }

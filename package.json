@@ -1,8 +1,8 @@
 {
   "name": "opencodex-agent",
   "displayName": "Opencodex",
-  "description": "The hub for free AI agents",
-  "version": "0.2.3",
+  "description": "A free, open-source coding agent inside VS Code.",
+  "version": "0.2.4",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -60,6 +60,10 @@
       {
         "command": "opencodex.usage",
         "title": "Opencodex: Show Token Usage"
+      },
+      {
+        "command": "opencodex.memory",
+        "title": "Opencodex: Open Project Memory"
       },
       {
         "command": "opencodex.marketplace",
@@ -125,6 +129,11 @@
           "default": "http://localhost:8888",
           "description": "Base URL for a SearXNG instance with JSON output enabled. Defaults to a local instance on port 8888; leave empty to disable web search."
         },
+        "opencodex.mcpServers": {
+          "type": "string",
+          "default": "{}",
+          "description": "JSON object of MCP servers. Each entry may use an HTTP/SSE URL or a stdio command with args, env, and cwd."
+        },
         "opencodex.extraFreeModels": {
           "type": "string",
           "default": "",
@@ -145,6 +154,7 @@
     "package": "npm run check && npm run build && vsce package"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^2.0.30",
     "@ai-sdk/openai-compatible": "^3.0.26",
     "ai": "^7.0.57",
     "zod": "^4.4.3"

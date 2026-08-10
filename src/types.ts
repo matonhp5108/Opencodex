@@ -1,6 +1,6 @@
 export type WebMessage =
   | { type: 'ready' }
-  | { type: 'send'; text: string; conversationId?: string }
+  | { type: 'send'; text: string; conversationId?: string; context?: ComposerContext }
   | { type: 'stop' }
   | { type: 'newConversation' }
   | { type: 'openConversation'; id: string }
@@ -13,10 +13,12 @@ export type WebMessage =
   | { type: 'setKey' }
   | { type: 'selectModel'; model: string; provider?: string }
   | { type: 'requestSettings' }
-  | { type: 'saveSettings'; maxSteps: number; approvalMode: string; searxngUrl: string; systemPrompt: string; provider: string; apiKey: string; extraFreeModels: string; baseUrl: string; onlyDefaultModels: boolean; confirmDelete: boolean; initialSetup?: boolean }
+  | { type: 'saveSettings'; maxSteps: number; approvalMode: string; searxngUrl: string; systemPrompt: string; mcpServers: string; provider: string; apiKey: string; extraFreeModels: string; baseUrl: string; onlyDefaultModels: boolean; confirmDelete: boolean; initialSetup?: boolean }
   | { type: 'removeApiKey'; provider: string }
   | { type: 'resetSettings' }
   | { type: 'openFile'; path: string }
+  | { type: 'chooseContext' }
+  | { type: 'openMemory' }
   | { type: 'revealInOS' }
   | { type: 'revealSkill'; folder: string }
   | { type: 'retryMessage'; conversationId: string }
@@ -85,6 +87,19 @@ export type ProviderModelGroup = {
 
 export type ApprovalMode = 'ask' | 'edits' | 'autonomous';
 
+export type ContextAttachment = {
+  kind: 'file' | 'folder';
+  path: string;
+};
+
+export type ComposerContext = {
+  includeActiveFile?: boolean;
+  includeSelection?: boolean;
+  activeFile?: string;
+  selectionLines?: string;
+  attachments?: ContextAttachment[];
+};
+
 export type UsageRecord = {
   model: string;
   provider: string;
@@ -102,6 +117,7 @@ export interface AppConfig {
   approvalMode: ApprovalMode;
   searxngUrl: string;
   systemPrompt: string;
+  mcpServers: string;
   extraFreeModels: string[];
   onlyDefaultModels: boolean;
 }

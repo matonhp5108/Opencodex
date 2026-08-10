@@ -7,16 +7,21 @@ import { installSkillFromRepository, listInstalledSkills, listRepositorySkills, 
 import { MAX_FILE_BYTES } from './types';
 import type { AppConfig } from './types';
 import { assertNotSecret, isDestructiveCommand, isSecret, pathInside, truncate } from './util';
+import type { TerminalManager } from './terminal';
 
 export interface ToolContext {
   root: vscode.Uri;
   skillsDir: vscode.Uri;
   config(): AppConfig;
   approve(kind: 'edit' | 'command', title: string, detail: string, destructive?: boolean): Promise<void>;
+  reviewEdit?(filePath: string, before: string, after: string, reason: string, destructive?: boolean): Promise<void>;
   post(message: unknown): void;
   resolvePath(filePath: string): vscode.Uri;
   describePlan(): string;
   abortSignal?: AbortSignal;
+  terminals?: TerminalManager;
+  delegate?: (role: 'explorer' | 'reviewer' | 'worker', task: string, context?: string) => Promise<string>;
+  memory?: { path: string; read(): Promise<string>; write(content: string, reason?: string): Promise<void> };
 }
 
 export function buildTools(ctx: ToolContext): Record<string, any> {
@@ -79,12 +84,15 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
       execute: async ({ path: filePath, content, reason }) => {
         assertNotSecret(filePath);
         const uri = ctx.resolvePath(filePath);
-        await ctx.approve('edit', `Write ${filePath}?`, reason ?? 'The agent wants to create or replace this file.');
         const edit = new vscode.WorkspaceEdit();
         let exists = true;
         try { await vscode.workspace.fs.stat(uri); } catch { exists = false; }
+        const before = exists ? (await vscode.workspace.openTextDocument(uri)).getText() : '';
+        if (ctx.reviewEdit) await ctx.reviewEdit(filePath, before, content, reason ?? 'The agent wants to create or replace this file.');
+        else await ctx.approve('edit', `Write ${filePath}?`, reason ?? 'The agent wants to create or replace this file.');
         if (exists) {
           const document = await vscode.workspace.openTextDocument(uri);
+          if (document.getText() !== before) throw new Error(`${filePath} changed while the proposed edit was being reviewed. Read it again before editing.`);
           const end = document.positionAt(document.getText().length);
           edit.replace(uri, new vscode.Range(new vscode.Position(0, 0), end), content);
         } else {
@@ -109,7 +117,10 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
         const first = source.indexOf(oldText);
         if (first < 0) throw new Error('Exact oldText was not found. Read the file again.');
         if (source.indexOf(oldText, first + oldText.length) >= 0) throw new Error('oldText occurs more than once; provide a larger unique block.');
-        await ctx.approve('edit', `Edit ${filePath}?`, reason ?? 'The agent wants to replace one block of text.');
+        const proposed = source.slice(0, first) + newText + source.slice(first + oldText.length);
+        if (ctx.reviewEdit) await ctx.reviewEdit(filePath, source, proposed, reason ?? 'The agent wants to replace one block of text.');
+        else await ctx.approve('edit', `Edit ${filePath}?`, reason ?? 'The agent wants to replace one block of text.');
+        if (document.getText() !== source) throw new Error(`${filePath} changed while the proposed edit was being reviewed. Read it again before editing.`);
         const edit = new vscode.WorkspaceEdit();
         edit.replace(uri, new vscode.Range(document.positionAt(first), document.positionAt(first + oldText.length)), newText);
         if (!await vscode.workspace.applyEdit(edit)) throw new Error('VS Code rejected the edit.');
@@ -126,7 +137,11 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
         const uri = ctx.resolvePath(filePath);
         const stat = await vscode.workspace.fs.stat(uri);
         if ((stat.type & vscode.FileType.Directory) !== 0) throw new Error('delete_file only deletes individual files.');
-        await ctx.approve('edit', `Delete ${filePath}?`, reason ?? 'The agent wants to delete this file.', true);
+        const before = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+        if (ctx.reviewEdit) await ctx.reviewEdit(filePath, before, '', reason ?? 'The agent wants to delete this file.', true);
+        else await ctx.approve('edit', `Delete ${filePath}?`, reason ?? 'The agent wants to delete this file.', true);
+        const current = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+        if (current !== before) throw new Error(`${filePath} changed while its deletion was being reviewed. Read it again before deleting.`);
         await vscode.workspace.fs.delete(uri, { recursive: false, useTrash: false });
         ctx.post({ type: 'changed', path: filePath, action: 'Deleted' });
         return `Deleted ${filePath}.`;
@@ -158,6 +173,66 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
       },
     }),
   };
+  if (ctx.delegate) {
+    tools.delegate_task = tool({
+      description: 'Delegate a bounded task to a specialized subagent with its own context window. Use explorer for repository research, reviewer for independent critique, and worker for a focused implementation or verification task. The subagent returns a concise result to this conversation.',
+      inputSchema: z.object({
+        role: z.enum(['explorer', 'reviewer', 'worker']),
+        task: z.string().min(1),
+        context: z.string().optional().describe('Only the context the subagent needs; it does not receive the parent conversation.'),
+      }),
+      execute: async ({ role, task, context }) => ctx.delegate?.(role, task, context),
+    });
+  }
+  if (ctx.terminals) {
+    tools.terminal_start = tool({
+      description: 'Start a named persistent shell session in the workspace. The session remains available across tool calls and conversations until stopped or VS Code closes.',
+      inputSchema: z.object({ name: z.string().min(1).max(60), command: z.string().optional() }),
+      execute: async ({ name, command }) => {
+        if (command?.trim()) await ctx.approve('command', `Start terminal '${name}'?`, command, isDestructiveCommand(command));
+        return ctx.terminals?.start(name, ctx.root.fsPath, command);
+      },
+    });
+    tools.terminal_write = tool({
+      description: 'Write input to a persistent terminal. Include a trailing newline to submit a shell command.',
+      inputSchema: z.object({ name: z.string().min(1), input: z.string().min(1) }),
+      execute: async ({ name, input }) => {
+        await ctx.approve('command', `Write to terminal '${name}'?`, input, isDestructiveCommand(input));
+        return ctx.terminals?.write(name, input);
+      },
+    });
+    tools.terminal_read = tool({
+      description: 'Read output from a persistent terminal. Pass the returned cursor on the next read to receive only new output.',
+      inputSchema: z.object({ name: z.string().min(1), cursor: z.number().int().min(0).default(0) }),
+      execute: async ({ name, cursor }) => JSON.stringify(ctx.terminals?.read(name, cursor), null, 2),
+    });
+    tools.terminal_list = tool({
+      description: 'List persistent terminal sessions and whether each is still running.',
+      inputSchema: z.object({}),
+      execute: async () => JSON.stringify(ctx.terminals?.list() ?? [], null, 2),
+    });
+    tools.terminal_stop = tool({
+      description: 'Stop one persistent terminal session.',
+      inputSchema: z.object({ name: z.string().min(1) }),
+      execute: async ({ name }) => ctx.terminals?.stop(name),
+    });
+  }
+  if (ctx.memory) {
+    tools.memory_read = tool({
+      description: 'Read durable project memory containing established decisions, conventions, and user preferences.',
+      inputSchema: z.object({}),
+      execute: async () => (await ctx.memory?.read()) || '(project memory is empty)',
+    });
+    tools.memory_update = tool({
+      description: 'Replace durable project memory after reading it. Preserve useful existing entries, keep it concise, and never store credentials or secrets.',
+      inputSchema: z.object({ content: z.string().max(24_000), reason: z.string().optional() }),
+      execute: async ({ content, reason }) => {
+        await ctx.memory?.write(content, reason);
+        ctx.post({ type: 'changed', path: ctx.memory?.path });
+        return `Updated ${ctx.memory?.path}.`;
+      },
+    });
+  }
   tools.skillsmp_search = tool({
     description: 'Search the SkillsMP marketplace for installable AI agent skills (SKILL.md packages). Returns each result with its name, description, star count, author, GitHub source URL, and marketplace URL. Use the returned GitHub source as the source for skillsmp_install_skill or skillsmp_get_skill.',
     inputSchema: z.object({

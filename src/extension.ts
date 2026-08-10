@@ -14,6 +14,7 @@ async function revealChat(): Promise<void> {
 export function activate(context: vscode.ExtensionContext) {
   const provider = new AgentViewProvider(context);
   context.subscriptions.push(
+    provider,
     vscode.window.registerWebviewViewProvider('opencodex.chat', provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
@@ -21,6 +22,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('opencodex.focus', () => revealChat()),
     vscode.commands.registerCommand('opencodex.settings', () => provider.openSettings()),
     vscode.commands.registerCommand('opencodex.usage', () => provider.openUsage()),
+    vscode.commands.registerCommand('opencodex.memory', () => provider.openMemory()),
     vscode.commands.registerCommand('opencodex.marketplace', () => provider.openMarketplace()),
     vscode.commands.registerCommand('opencodex.clear', () => provider.clear()),
     vscode.commands.registerCommand('opencodex.testSystemNotification', () => {

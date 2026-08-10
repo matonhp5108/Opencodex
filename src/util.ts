@@ -91,7 +91,7 @@ export function summarizeInput(input: unknown): string {
 }
 
 export function humanToolName(name: string): string {
-  return ({ list_files: 'Listing files', read_file: 'Reading file', search_files: 'Searching workspace', write_file: 'Writing file', replace_text: 'Editing file', delete_file: 'Deleting file', get_diagnostics: 'Checking diagnostics', run_command: 'Running command', web_search: 'Searching the web', plan: 'Planning', skillsmp_search: 'Searching SkillsMP', skillsmp_list_repo_skills: 'Listing repo skills', skillsmp_get_skill: 'Previewing skill', skillsmp_install_skill: 'Installing skill', skillsmp_list_installed: 'Listing installed skills' } as Record<string, string>)[name] ?? name;
+  return ({ list_files: 'Listing files', read_file: 'Reading file', search_files: 'Searching workspace', write_file: 'Writing file', replace_text: 'Editing file', delete_file: 'Deleting file', get_diagnostics: 'Checking diagnostics', run_command: 'Running command', web_search: 'Searching the web', plan: 'Planning', delegate_task: 'Running subagent', terminal_start: 'Starting terminal', terminal_write: 'Writing to terminal', terminal_read: 'Reading terminal', terminal_list: 'Listing terminals', terminal_stop: 'Stopping terminal', memory_read: 'Reading project memory', memory_update: 'Updating project memory', skillsmp_search: 'Searching SkillsMP', skillsmp_list_repo_skills: 'Listing repo skills', skillsmp_get_skill: 'Previewing skill', skillsmp_install_skill: 'Installing skill', skillsmp_list_installed: 'Listing installed skills' } as Record<string, string>)[name] ?? name;
 }
 
 export function toolTask(name: string, input: unknown): string {

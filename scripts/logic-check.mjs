@@ -1,4 +1,6 @@
 import { isCompatibleModel, listProviders } from '../src/providers.ts';
+import { expandEnvironment, parseMcpServers } from '../src/mcp.ts';
+import { terminalShellConfig } from '../src/terminal.ts';
 
 const providerConfigured = (provider, apiKeys, baseUrls) => {
   if (provider.isLocal) return Boolean(baseUrls[baseUrlKey(provider.id)]);
@@ -60,5 +62,28 @@ const groups = [
 ];
 assert(groups.some(g => g.models.includes('gemini-2.5-flash')) === true, 'selected model present -> kept');
 assert(groups.some(g => g.models.includes('old-model')) === false, 'stale selected model -> cleared');
+
+const mcp = parseMcpServers(JSON.stringify({
+  local: { command: 'node', args: ['server.js'] },
+  remote: { url: 'https://example.com/mcp', headers: { Authorization: 'Bearer ${env:MCP_TOKEN}' } },
+}));
+assert('command' in mcp.local && mcp.local.command === 'node', 'MCP stdio configuration parses');
+assert('url' in mcp.remote && mcp.remote.url === 'https://example.com/mcp', 'MCP HTTP configuration parses');
+let invalidMcpRejected = false;
+try { parseMcpServers('[]'); } catch { invalidMcpRejected = true; }
+assert(invalidMcpRejected, 'invalid MCP configuration is rejected');
+
+const windowsShell = terminalShellConfig('win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' });
+assert(windowsShell.executable.endsWith('cmd.exe') && windowsShell.args.join(' ') === '/d /q' && windowsShell.lineEnding === '\r\n', 'persistent terminal uses Windows cmd flags and CRLF');
+const linuxShell = terminalShellConfig('linux', { SHELL: '/bin/bash' });
+assert(linuxShell.executable === '/bin/bash' && linuxShell.args.join(' ') === '-i' && linuxShell.lineEnding === '\n', 'persistent terminal uses the configured Unix shell');
+const macShell = terminalShellConfig('darwin', {});
+assert(macShell.executable === '/bin/sh' && macShell.lineEnding === '\n', 'persistent terminal has a portable macOS/Linux fallback');
+
+const expandedWindowsEnv = expandEnvironment(
+  { TOOL: '${env:ProgramFiles(x86)}\\tool', TOKEN: '${env:MCP_TOKEN}' },
+  { 'ProgramFiles(x86)': 'C:\\Program Files (x86)', MCP_TOKEN: 'test-token' },
+);
+assert(expandedWindowsEnv?.TOOL === 'C:\\Program Files (x86)\\tool' && expandedWindowsEnv.TOKEN === 'test-token', 'MCP expands Unix and Windows-style environment variable names');
 
 console.log(process.exitCode ? 'LOGIC CHECK FAILED' : 'LOGIC CHECK OK');
