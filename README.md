@@ -17,7 +17,9 @@ Open a project, pick a provider and a free model, and describe what you want. Op
 - **Local model support**: Run models on your own machine with Ollama. No cloud, no key.
 - **Codex-style agent loop**: A collapsible work panel shows each tool step, live activity, and streamed reasoning.
 - **Safe**: All agent paths are confined to the open workspace, `.env` and credential files are blocked, and file edits participate in editor undo.
+- **Skills from SkillsMP**: Search, preview, and install agent skills (SKILL.md packages) from the [SkillsMP marketplace](https://skillsmp.com) with a single request or from the **shop icon** beside Settings — no API key.
 - **Flexible approval modes**: Confirm every action, auto-approve edits (still confirms destructive commands), or use **Open access** to auto-approve edits and commands.
+- **Per-folder projects**: Every folder you open becomes a project with its own chat history; the sidebar always reflects the currently opened VS Code folder.
 - **Conversation management**: Switch, archive, and permanently delete conversations; Git restore points roll back tracked files to any agent response.
 - **Resilient streaming**: Up to five visible connection retries, animated streamed answers, and persistent red error messages instead of fake `Done.` responses.
 
@@ -57,6 +59,7 @@ Providers are selected in Settings (`opencodex.provider`). Every provider speaks
 
 ### Agent loop & interface
 
+- Per-folder projects with independent chat history, a project switcher in the sidebar, automatic switching when you open a different folder, and project deletion
 - Switchable, archivable project conversations with permanent deletion for archived conversations
 - Right-aligned user bubbles and Markdown-formatted assistant responses, with headings, lists, emphasis, links, inline code, and fenced code blocks
 - Collapsible Codex-style work panel with an animated loading sheen while the agent reasons or uses tools
@@ -90,12 +93,24 @@ Set a SearXNG base URL in Settings to enable the agent's `web_search` tool. The 
 
 Read the [SearXNG installation instructions](https://docs.searxng.org/admin/installation.html) for details on how to install it.
 
+## Skills (SkillsMP)
+
+Opencodex can install new agent skills — SKILL.md packages — from the [SkillsMP marketplace](https://skillsmp.com) without leaving the chat:
+
+- **Browse the UI**: click the **shop icon** beside Settings to open the skill marketplace — search SkillsMP by keyword (top rated or recently updated) and/or browse any GitHub repo. Each result shows its description, stars, and author, with **Preview** (renders the SKILL.md) and **Install** buttons. Installed skills are listed at the top., e.g. *"find me a skill for web scraping"* (`skillsmp_search`). Results include a description, stars, author, and the GitHub source.
+- **Preview**: read a skill's SKILL.md from GitHub before installing it (`skillsmp_get_skill`).
+- **Install**: the agent downloads the skill folder into `.opencodex/skills/` in your workspace after your approval (`skillsmp_install_skill`). You can also point directly at any GitHub repository, e.g. *"install the planning skill from davila7/claude-code-templates"*.
+- **List**: see what a repository offers (`skillsmp_list_repo_skills`) or what is already installed (`skillsmp_list_installed`).
+
+Installed skills are surfaced to the agent automatically (their name and description are added to its instructions), so they are ready to use from the next request. Search works anonymously — no SkillsMP API key is required.
+
 ## Requirements
 
 - VS Code **1.106.0** or newer
 - An internet connection to the chosen provider's API for the model catalog and completions
 - (Optional) A free API key for cloud providers such as OpenRouter, Groq, Gemini, or Mistral
 - (Optional) A SearXNG instance with JSON output enabled for web search
+- (Optional) An internet connection to skillsmp.com and github.com to search, preview, and install skills
 - (Optional) Ollama running locally for the local provider
 
 ## Known limitations
@@ -104,6 +119,7 @@ Read the [SearXNG installation instructions](https://docs.searxng.org/admin/inst
 - Free-tier rate limits of the selected provider apply (OpenCode and local providers have no key or quota).
 - Mistral has a small curated free list (its API exposes no free marker); new free models there can be added through the **Extra free model IDs** setting. All other providers resolve free models from their live catalog.
 - Web search requires a user-provided SearXNG instance; no bundled search backend is included.
+- Skills search and installation call skillsmp.com and github.com; unauthenticated GitHub API rate limits may apply to repository listings.
 - Restore points are created only for Git-tracked projects and only for newer responses.
 
 ## Commands

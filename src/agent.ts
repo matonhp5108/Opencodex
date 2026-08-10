@@ -4,11 +4,13 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { ToolLoopAgent, isLoopFinished, isStepCount } from 'ai';
 import { captureGitTree, isGitTrackedWorkspace, restoreGitTree } from './git';
 import { fetchProviderModels, getProvider, listProviders, type Provider } from './providers';
+import { installSkillFromRepository, listInstalledSkills, listRepositorySkills, readSkillMarkdown, resolveInstallPath, sanitizeSkillName, searchSkills, skillsPromptBlock, uninstallSkill, SKILL_FILE_NAMES, SKILLS_SUBDIR } from './skills';
 import { buildTools } from './tools';
-import type { AppConfig, Conversation, ProviderModelGroup, TranscriptItem, WebMessage, WorkItem } from './types';
+import type { AppConfig, Conversation, Project, ProviderModelGroup, TranscriptItem, WebMessage, WorkItem } from './types';
 import { MAX_PERSISTED_REASONING } from './types';
-import { conversationTitle, createTranscriptItem, errorMessage, friendlyError, humanToolName, normalizeApprovalMode, normalizeTranscriptItem, providerErrorMessage, shouldAutoContinue, toolTask } from './util';
+import { conversationTitle, createTranscriptItem, errorMessage, friendlyError, humanToolName, normalizeApprovalMode, normalizeTranscriptItem, pathInside, providerErrorMessage, shouldAutoContinue, toolTask, truncate } from './util';
 import { getWebviewHtml } from './webview';
+import { systemNotify } from './notifications';
 import { aggregateUsage, loadUsage, recordUsage } from './usage';
 
 type PlanState = {
@@ -31,29 +33,77 @@ function userOsName(): string {
   }
 }
 
+function notificationSummary(text: string): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  return clean.length > 140 ? `${clean.slice(0, 139)}…` : clean;
+}
+
 type ActiveRun = {
   conversationId: string;
   controller: AbortController;
   steering: boolean;
 };
 
+type ProjectMetaEntry = { id?: unknown; name?: unknown; path?: unknown; createdAt?: unknown; updatedAt?: unknown };
+
+function isProjectMeta(entry: unknown): entry is ProjectMetaEntry & { id: string; name: string; path: string } {
+  const meta = entry as ProjectMetaEntry | undefined;
+  return Boolean(meta && typeof meta.id === 'string' && typeof meta.name === 'string' && typeof meta.path === 'string');
+}
+
 export class AgentViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
-  private conversations: Conversation[] = [];
-  private activeConversationId = '';
+  private projects: Project[] = [];
+  private activeProjectId = '';
+  private loaded = false;
   private runs = new Map<string, ActiveRun>();
   private queue: { text: string; conversationId: string }[] = [];
   private apiKeys: Record<string, string> = {};
   private persistChain: Promise<void> = Promise.resolve();
+  private notifySeq = 0;
+  private pendingNotifies = new Map<number, (choice: 'ok' | 'secondary' | 'cancel') => void>();
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext) {
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeWorkspaceFolders(() => this.onWorkspaceFoldersChanged()),
+    );
+  }
+
+  private onWorkspaceFoldersChanged(): void {
+    if (!this.loaded) return;
+    this.reanchorToWorkspace();
+  }
+
+  private reanchorToWorkspace(): void {
+    const previous = this.activeProjectId;
+    const root = this.workspaceRoot()?.fsPath;
+    if (root) {
+      let project = this.projects.find(item => item.path === root);
+      if (!project) {
+        project = this.createProject(root);
+        this.projects.unshift(project);
+        this.migrateLegacyWorkspaceState(project);
+      }
+      this.activeProjectId = project.id;
+    } else {
+      this.activeProjectId = this.projects[0]?.id ?? '';
+    }
+    if (this.activeProjectId !== previous || root) {
+      this.sortProjects();
+      void this.persistProjects();
+      this.syncConversations();
+    }
+  }
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = { enableScripts: true };
     view.webview.html = getWebviewHtml(view.webview, this.context.extensionUri, this.workspaceRoot()?.fsPath);
     view.webview.onDidReceiveMessage((message: WebMessage) => this.onMessage(message));
-    this.loadConversations();
+    view.onDidDispose(() => this.disposePendingNotifies());
+    this.loaded = true;
+    this.loadProjects();
     this.syncConversations();
     void this.loadApiKeys().then(() => {
       if (this.view !== view) return;
@@ -98,6 +148,71 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: 'usage', ...aggregateUsage(loadUsage(this.context)) });
   }
 
+  openMarketplace(): void {
+    this.view?.show?.(true);
+    this.post({ type: 'showMarketplace' });
+    this.sendMarketplaceInstalled();
+  }
+
+  private skillsRoot(): vscode.Uri {
+    return vscode.Uri.joinPath(this.context.globalStorageUri, 'skills');
+  }
+
+  private globalSkillsReady?: Promise<void>;
+  private ensureGlobalSkills(): Promise<void> {
+    this.globalSkillsReady ??= this.ensureGlobalSkillsOnce();
+    return this.globalSkillsReady;
+  }
+
+  private async ensureGlobalSkillsOnce(): Promise<void> {
+    try {
+      if (this.context.globalState.get<boolean>('opencodex.skillsMigrated', false)) return;
+      const root = this.workspaceRoot();
+      if (!root) { this.markSkillsMigrated(); return; }
+      const legacy = vscode.Uri.joinPath(root, ...SKILLS_SUBDIR.split('/'));
+      let entries: [string, vscode.FileType][];
+      try {
+        entries = await vscode.workspace.fs.readDirectory(legacy);
+      } catch {
+        this.markSkillsMigrated();
+        return;
+      }
+      const skillFolders = entries.filter(([, type]) => (type & vscode.FileType.Directory) !== 0);
+      if (!skillFolders.length) { this.markSkillsMigrated(); return; }
+      const target = this.skillsRoot();
+      let existing: [string, vscode.FileType][] = [];
+      try { existing = await vscode.workspace.fs.readDirectory(target); } catch {}
+      const present = new Set(existing.map(([name]) => name));
+      for (const [name] of skillFolders) {
+        if (present.has(name)) continue;
+        await this.copyFolder(vscode.Uri.joinPath(legacy, name), vscode.Uri.joinPath(target, name));
+      }
+      this.markSkillsMigrated();
+    } catch {}
+  }
+
+  private markSkillsMigrated(): void {
+    void this.context.globalState.update('opencodex.skillsMigrated', true);
+  }
+
+  private async copyFolder(source: vscode.Uri, target: vscode.Uri): Promise<void> {
+    const entries = await vscode.workspace.fs.readDirectory(source);
+    await vscode.workspace.fs.createDirectory(target);
+    for (const [name, type] of entries) {
+      const from = vscode.Uri.joinPath(source, name);
+      const to = vscode.Uri.joinPath(target, name);
+      if ((type & vscode.FileType.Directory) !== 0) await this.copyFolder(from, to);
+      else await vscode.workspace.fs.writeFile(to, await vscode.workspace.fs.readFile(from));
+    }
+  }
+
+  private async sendMarketplaceInstalled(): Promise<void> {
+    await this.ensureGlobalSkills();
+    const sources = this.context.globalState.get<Record<string, string>>('opencodex.skillSources', {}) ?? {};
+    const skills = (await listInstalledSkills(this.skillsRoot())).map(skill => ({ ...skill, source: sources[skill.folder] ?? '' }));
+    this.post({ type: 'marketplaceInstalled', skills });
+  }
+
   private async showSettings(initialSetup = false): Promise<void> {
     const config = this.config();
     this.post({
@@ -112,6 +227,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       apiKeys: Object.fromEntries(listProviders().map(provider => [provider.id, Boolean(this.apiKeys[provider.id] || (provider.apiKeyEnvVar ? process.env[provider.apiKeyEnvVar] : ''))])),
       configured: Object.fromEntries(listProviders().map(provider => [provider.id, this.providerConfigured(provider)])),
       onlyDefaultModels: this.config().onlyDefaultModels,
+      confirmDelete: this.confirmDeleteConversations(),
       initialSetup,
     });
   }
@@ -125,19 +241,72 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     this.newConversation();
   }
 
-  private loadConversations(): void {
-    this.conversations = this.context.workspaceState.get<Conversation[]>('opencodex.conversations', []).map(conversation => {
-      const baseTimestamp = Number.isFinite(conversation.createdAt) ? conversation.createdAt : Date.now();
-      return { ...conversation, items: conversation.items.map((item, index) => normalizeTranscriptItem(item, baseTimestamp + index)) };
+  private loadProjects(): void {
+    const stored = this.context.globalState.get<unknown[]>('opencodex.projectIndex', []);
+    this.projects = (Array.isArray(stored) ? stored : []).filter(isProjectMeta).map(entry => {
+      const data = this.context.globalState.get<{ conversations?: unknown; activeConversationId?: unknown } | undefined>(`opencodex.project.${entry.id}`, undefined);
+      const conversations = Array.isArray(data?.conversations) ? data.conversations as Conversation[] : [];
+      return {
+        id: entry.id,
+        name: entry.name,
+        path: entry.path,
+        createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : Date.now(),
+        updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : Date.now(),
+        activeConversationId: typeof data?.activeConversationId === 'string' ? data.activeConversationId : '',
+        conversations: conversations.map(conversation => {
+          const baseTimestamp = Number.isFinite(conversation.createdAt) ? conversation.createdAt : Date.now();
+          return { ...conversation, items: conversation.items.map((item, index) => normalizeTranscriptItem(item, baseTimestamp + index)) };
+        }),
+      };
     });
-    if (!this.conversations.length) {
-      const legacy = this.context.workspaceState.get<TranscriptItem[]>('opencodex.transcript', []).map((item, index) => normalizeTranscriptItem(item, Date.now() + index));
-      this.conversations = [this.createConversation(legacy)];
+    const seenIds = new Set<string>();
+    this.projects = this.projects.filter(project => seenIds.has(project.id) ? false : (seenIds.add(project.id), true));
+    const root = this.workspaceRoot()?.fsPath;
+    if (root) {
+      let project = this.projects.find(item => item.path === root);
+      if (!project) {
+        project = this.createProject(root);
+        this.projects.unshift(project);
+      }
+      this.migrateLegacyWorkspaceState(project);
+      this.activeProjectId = project.id;
+    } else {
+      this.activeProjectId = this.projects[0]?.id ?? '';
     }
+    this.sortProjects();
+    void this.persistProjects();
+  }
+
+  private migrateLegacyWorkspaceState(project: Project): void {
+    const legacy = this.context.workspaceState.get<Conversation[]>('opencodex.conversations', []);
+    const legacyTranscript = this.context.workspaceState.get<TranscriptItem[]>('opencodex.transcript', []);
+    if ((!legacy.length && !legacyTranscript.length) || project.conversations.length) return;
+    const conversations = legacy.length
+      ? legacy.map(conversation => {
+        const baseTimestamp = Number.isFinite(conversation.createdAt) ? conversation.createdAt : Date.now();
+        return { ...conversation, items: conversation.items.map((item, index) => normalizeTranscriptItem(item, baseTimestamp + index)) };
+      })
+      : [this.createConversation(legacyTranscript.map((item, index) => normalizeTranscriptItem(item, Date.now() + index)))];
+    project.conversations = conversations;
     const saved = this.context.workspaceState.get<string>('opencodex.activeConversationId', '');
-    this.activeConversationId = this.conversations.some(item => item.id === saved && !item.archived)
-      ? saved : (this.conversations.find(item => !item.archived)?.id ?? this.conversations[0]!.id);
-    void this.persistConversations();
+    project.activeConversationId = conversations.some(item => item.id === saved && !item.archived) ? saved : (conversations.find(item => !item.archived)?.id ?? '');
+    project.updatedAt = Date.now();
+    void this.context.workspaceState.update('opencodex.conversations', undefined);
+    void this.context.workspaceState.update('opencodex.activeConversationId', undefined);
+    void this.context.workspaceState.update('opencodex.transcript', undefined);
+  }
+
+  private createProject(rootPath: string): Project {
+    const now = Date.now();
+    return {
+      id: rootPath,
+      name: rootPath ? path.basename(rootPath) || rootPath : 'No folder',
+      path: rootPath,
+      conversations: [],
+      activeConversationId: '',
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   private createConversation(items: TranscriptItem[] = []): Conversation {
@@ -146,49 +315,101 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     return { id: `${now}-${Math.random().toString(36).slice(2, 8)}`, title: first ? conversationTitle(first) : 'New conversation', items, archived: false, createdAt: now, updatedAt: now };
   }
 
-  private activeConversation(): Conversation {
-    let conversation = this.conversations.find(item => item.id === this.activeConversationId);
+  private activeProject(): Project | undefined {
+    return this.projects.find(item => item.id === this.activeProjectId);
+  }
+
+  private ensureProjectForRoot(): Project | undefined {
+    const root = this.workspaceRoot()?.fsPath;
+    if (!root) return undefined;
+    let project = this.projects.find(item => item.path === root);
+    if (!project) {
+      project = this.createProject(root);
+      this.projects.unshift(project);
+    }
+    this.activeProjectId = project.id;
+    return project;
+  }
+
+  private sortProjects(): void {
+    const root = this.workspaceRoot()?.fsPath;
+    this.projects.sort((a, b) => {
+      if (root) {
+        if (a.path === root) return -1;
+        if (b.path === root) return 1;
+      }
+      return b.updatedAt - a.updatedAt;
+    });
+  }
+
+  private activeConversation(): Conversation | undefined {
+    const project = this.activeProject();
+    if (!project) return undefined;
+    let conversation = project.conversations.find(item => item.id === project.activeConversationId);
     if (!conversation) {
       conversation = this.createConversation();
-      this.conversations.unshift(conversation);
-      this.activeConversationId = conversation.id;
+      project.conversations.unshift(conversation);
+      project.activeConversationId = conversation.id;
     }
     return conversation;
   }
 
   private newConversation(): void {
-    const empty = this.conversations.find(item => !item.archived && item.items.length === 0);
+    const project = this.activeProject();
+    if (!project) return;
+    const empty = project.conversations.find(item => !item.archived && item.items.length === 0);
     const conversation = empty ?? this.createConversation();
-    if (!empty) this.conversations.unshift(conversation);
-    this.activeConversationId = conversation.id;
-    void this.persistConversations();
+    if (!empty) project.conversations.unshift(conversation);
+    project.activeConversationId = conversation.id;
+    project.updatedAt = Date.now();
+    void this.persistProjects();
     this.syncConversations();
   }
 
-  private persistConversations(): Promise<void> {
-    const conversations = this.conversations.slice(0, 100);
-    const activeId = this.activeConversationId;
+  private persistProjects(): Promise<void> {
+    const projects = this.projects.slice(0, 60);
     this.persistChain = this.persistChain.then(async () => {
-      await this.context.workspaceState.update('opencodex.conversations', conversations);
-      await this.context.workspaceState.update('opencodex.activeConversationId', activeId);
+      await this.context.globalState.update('opencodex.projectIndex', projects.map(({ id, name, path, createdAt, updatedAt }) => ({ id, name, path, createdAt, updatedAt })));
+      for (const project of projects) {
+        await this.context.globalState.update(`opencodex.project.${project.id}`, {
+          conversations: project.conversations.slice(0, 100),
+          activeConversationId: project.activeConversationId,
+        });
+      }
     });
     return this.persistChain;
   }
 
   private syncConversations(includeActive = true): void {
-    this.post({ type: 'conversations', conversations: this.conversations.map(({ id, title, archived, updatedAt, items }) => ({
+    const root = this.workspaceRoot();
+    this.post({ type: 'project', name: root ? path.basename(root.fsPath) || root.fsPath : 'No folder open', path: root ? root.fsPath : '' });
+    const project = this.activeProject();
+    if (!project) return;
+    this.post({ type: 'conversations', conversations: project.conversations.map(({ id, title, archived, updatedAt, items }) => ({
       id, title, archived, updatedAt,
       hasMessages: items.length > 0,
       running: this.runs.has(id),
       queued: this.queue.find(entry => entry.conversationId === id)?.text ?? null,
-    })), activeId: this.activeConversationId });
+    })), activeId: project.activeConversationId });
     if (includeActive) {
       const active = this.activeConversation();
-      this.post({ type: 'conversation', id: active.id, items: active.items });
+      if (active) this.post({ type: 'conversation', id: active.id, items: active.items });
     }
   }
 
+  private confirmDeleteConversations(): boolean {
+    return this.context.globalState.get<boolean>('opencodex.confirmDelete', true) !== false;
+  }
+
   private async onMessage(message: WebMessage): Promise<void> {
+    if (message.type === 'notifyResponse') {
+      const resolve = this.pendingNotifies.get(message.id);
+      if (resolve) {
+        this.pendingNotifies.delete(message.id);
+        resolve(message.choice);
+      }
+      return;
+    }
     if (message.type === 'ready') {
       this.syncConversations();
       await this.loadApiKeys();
@@ -199,7 +420,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     if (message.type === 'stop') {
-      this.runs.get(this.activeConversationId)?.controller.abort();
+      const project = this.activeProject();
+      this.runs.get(project?.activeConversationId ?? '')?.controller.abort();
       return;
     }
     if (message.type === 'copyText') {
@@ -221,54 +443,72 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     }
     if (message.type === 'newConversation') return this.newConversation();
     if (message.type === 'openConversation') {
-      if (this.conversations.some(item => item.id === message.id)) {
-        this.activeConversationId = message.id;
-        void this.persistConversations();
+      const project = this.activeProject();
+      if (project && project.conversations.some(item => item.id === message.id)) {
+        project.activeConversationId = message.id;
+        project.updatedAt = Date.now();
+        void this.persistProjects();
         this.syncConversations();
       }
       return;
     }
     if (message.type === 'archiveConversation') {
-      const conversation = this.conversations.find(item => item.id === message.id);
-      if (!conversation || this.runs.has(message.id)) return;
+      const project = this.activeProject();
+      const conversation = project?.conversations.find(item => item.id === message.id);
+      if (!project || !conversation || this.runs.has(message.id)) return;
       this.queue = this.queue.filter(entry => entry.conversationId !== message.id);
       conversation.archived = !conversation.archived;
       conversation.updatedAt = Date.now();
-      if (conversation.archived && this.activeConversationId === conversation.id) {
-        const next = this.conversations.find(item => !item.archived && item.id !== conversation.id);
-        if (next) this.activeConversationId = next.id;
+      project.updatedAt = Date.now();
+      if (conversation.archived && project.activeConversationId === conversation.id) {
+        const next = project.conversations.find(item => !item.archived && item.id !== conversation.id);
+        if (next) project.activeConversationId = next.id;
         else {
           const fresh = this.createConversation();
-          this.conversations.unshift(fresh);
-          this.activeConversationId = fresh.id;
+          project.conversations.unshift(fresh);
+          project.activeConversationId = fresh.id;
         }
       }
-      await this.persistConversations();
+      await this.persistProjects();
       this.syncConversations();
       return;
     }
     if (message.type === 'deleteConversation') {
-      const conversation = this.conversations.find(item => item.id === message.id);
-      if (!conversation?.archived || this.runs.has(message.id)) return;
-      this.queue = this.queue.filter(entry => entry.conversationId !== message.id);
-      this.conversations = this.conversations.filter(item => item.id !== message.id);
-      if (this.activeConversationId === message.id) {
-        const next = this.conversations.find(item => !item.archived) ?? this.createConversation();
-        if (!this.conversations.includes(next)) this.conversations.unshift(next);
-        this.activeConversationId = next.id;
+      const project = this.activeProject();
+      const conversation = project?.conversations.find(item => item.id === message.id);
+      if (!project || !conversation || this.runs.has(message.id)) return;
+      const messageCount = conversation.items.length;
+      const detail = 'This permanently deletes ' + (conversation.archived ? 'the archived conversation' : 'this conversation') + (messageCount ? ' and its ' + messageCount + ' message' + (messageCount === 1 ? '' : 's') : '') + '. This cannot be undone.';
+      if (this.confirmDeleteConversations()) {
+        const choice = await this.prompt('Delete conversation \'' + conversation.title + '\'?', detail, { ok: 'Delete', secondary: 'Don\'t ask again', cancel: 'Cancel', danger: true });
+        if (choice === 'secondary') {
+          await this.context.globalState.update('opencodex.confirmDelete', false);
+          return;
+        }
+        if (choice !== 'ok') return;
       }
-      await this.persistConversations();
+      this.queue = this.queue.filter(entry => entry.conversationId !== message.id);
+      project.conversations = project.conversations.filter(item => item.id !== message.id);
+      project.updatedAt = Date.now();
+      if (project.activeConversationId === message.id) {
+        const next = project.conversations.find(item => !item.archived) ?? this.createConversation();
+        if (!project.conversations.includes(next)) project.conversations.unshift(next);
+        project.activeConversationId = next.id;
+      }
+      await this.persistProjects();
       this.syncConversations();
+      systemNotify(this.context, { subtitle: 'Conversation deleted', message: 'Conversation \'' + conversation.title + '\' was deleted.' });
       return;
     }
     if (message.type === 'restoreCheckpoint') {
       if (this.runs.size) return;
       const root = this.workspaceRoot();
-      if (!root || !isGitTrackedWorkspace(root.fsPath)) {
-        void vscode.window.showInformationMessage('Restore is available only for Git-tracked projects.');
+      const project = this.activeProject();
+      if (!root || !project || project.path !== root.fsPath || !isGitTrackedWorkspace(root.fsPath)) {
+        void vscode.window.showInformationMessage('Restore is available only for the Git-tracked project that matches the current folder.');
         return;
       }
-      const conversation = this.conversations.find(item => item.id === message.conversationId);
+      const conversation = project.conversations.find(item => item.id === message.conversationId);
       const targetIndex = conversation?.items.findIndex(item => item.id === message.itemId && item.role === 'assistant') ?? -1;
       if (!conversation || targetIndex < 0) return;
       const target = conversation.items[targetIndex];
@@ -278,8 +518,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       }
       const removedMessageCount = conversation.items.length - targetIndex - 1;
       const detail = `This will restore Git-visible files to their state before this response${removedMessageCount ? ` and remove ${removedMessageCount} later message${removedMessageCount === 1 ? '' : 's'}` : ''}. The selected message will stay. Your staging area will not be changed.`;
-      const choice = await vscode.window.showWarningMessage('Restore to before this response?', { modal: true, detail }, 'Restore');
-      if (choice !== 'Restore') return;
+      const choice = await this.prompt('Restore to before this response?', detail, { ok: 'Restore', cancel: 'Cancel', danger: true });
+      if (choice !== 'ok') return;
       try {
         await restoreGitTree(root.fsPath, target.gitTree);
       } catch (error) {
@@ -288,14 +528,117 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       }
       conversation.items = conversation.items.slice(0, targetIndex + 1);
       conversation.updatedAt = Date.now();
-      await this.persistConversations();
-      this.activeConversationId = conversation.id;
+      project.activeConversationId = conversation.id;
+      project.updatedAt = Date.now();
+      await this.persistProjects();
       this.syncConversations();
       void vscode.window.showInformationMessage('Git workspace and conversation restored.');
       return;
     }
     if (message.type === 'setKey' || message.type === 'requestSettings') return this.showSettings();
     if (message.type === 'requestUsage') return this.openUsage();
+    if (message.type === 'requestMarketplace') return this.openMarketplace();
+    if (message.type === 'requestMarketplaceInstalled') return void this.sendMarketplaceInstalled();
+    if (message.type === 'marketplaceTop') {
+      try {
+        const { skills, total } = await searchSkills('skill', { limit: 20, sortBy: message.sortBy ?? 'stars' });
+        this.post({ type: 'marketplaceResults', query: '', total, skills });
+      } catch (error) {
+        this.post({ type: 'marketplaceError', text: errorMessage(error) });
+      }
+      return;
+    }
+    if (message.type === 'marketplaceSearch') {
+      try {
+        const { skills, total } = await searchSkills(message.query, { limit: Math.max(1, Math.min(50, message.limit || 10)), sortBy: message.sortBy });
+        this.post({ type: 'marketplaceResults', query: message.query, total, skills });
+      } catch (error) {
+        this.post({ type: 'marketplaceError', text: errorMessage(error) });
+      }
+      return;
+    }
+    if (message.type === 'marketplaceListRepo') {
+      try {
+        const reference = resolveInstallPath(message.source, '', message.branch ?? 'main');
+        const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch);
+        this.post({ type: 'marketplaceRepoSkills', owner: reference.owner, repo: reference.repo, branch: reference.branch, skills });
+      } catch (error) {
+        this.post({ type: 'marketplaceError', text: errorMessage(error) });
+      }
+      return;
+    }
+    if (message.type === 'marketplacePreview') {
+      try {
+        const reference = resolveInstallPath(message.source, '', message.branch ?? 'main');
+        const folderPath = message.path ?? reference.folderPath ?? '';
+        if (!folderPath) {
+          const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch);
+          this.post({ type: 'marketplaceRepoSkills', owner: reference.owner, repo: reference.repo, branch: reference.branch, skills });
+          return;
+        }
+        const { content } = await readSkillMarkdown(reference.owner, reference.repo, reference.branch, folderPath);
+        this.post({ type: 'marketplacePreview', title: reference.owner + '/' + reference.repo + ' / ' + folderPath, markdown: truncate(content), source: message.source, path: folderPath });
+      } catch (error) {
+        this.post({ type: 'marketplaceError', text: errorMessage(error) });
+      }
+      return;
+    }
+    if (message.type === 'marketplaceInstall') {
+      const key = message.key ?? '';
+      await this.ensureGlobalSkills();
+      try {
+        const reference = resolveInstallPath(message.source, message.skill ?? '', message.branch ?? 'main');
+        const requested = message.skill ?? '';
+        let folderPath = reference.folderPath;
+        if (!folderPath) {
+          const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch);
+          const match = requested
+            ? skills.find(candidate => candidate.name === sanitizeSkillName(requested) || candidate.name.toLowerCase() === requested.trim().toLowerCase())
+            : undefined;
+          if (!match) {
+            this.post({ type: 'marketplaceResult', ok: false, text: skills.length ? reference.owner + '/' + reference.repo + ' has ' + skills.length + ' skills. Pick one: ' + skills.slice(0, 20).map(skill => skill.name).join(', ') : 'No SKILL.md skills found in ' + reference.owner + '/' + reference.repo + '.', key });
+            return;
+          }
+          folderPath = match.path;
+        }
+        const installName = sanitizeSkillName(reference.hintedName ?? folderPath.split('/').pop() ?? message.skill ?? 'skill');
+        await this.approve('edit', 'Install skill "' + installName + '"?', 'Source: ' + reference.owner + '/' + reference.repo + (folderPath ? ' (' + folderPath + ')' : '') + '\n\nThe skill will be installed into your global skills folder as \'' + installName + '\' and is available in every workspace.');
+        await installSkillFromRepository(this.skillsRoot(), { owner: reference.owner, repo: reference.repo, branch: reference.branch, folderPath, installName }, undefined, (done, total) => {
+          this.post({ type: 'marketplaceInstallProgress', key, done, total });
+        });
+        const sources = this.context.globalState.get<Record<string, string>>('opencodex.skillSources', {}) ?? {};
+        sources[installName] = reference.owner + '/' + reference.repo;
+        await this.context.globalState.update('opencodex.skillSources', sources);
+        this.post({ type: 'marketplaceResult', ok: true, text: '', key });
+        await this.sendMarketplaceInstalled();
+      } catch (error) {
+        this.post({ type: 'marketplaceResult', ok: false, text: errorMessage(error), key });
+      }
+      return;
+    }
+    if (message.type === 'marketplaceUninstall') {
+      await this.ensureGlobalSkills();
+      try {
+        const safeName = sanitizeSkillName(message.folder);
+        const installed = await listInstalledSkills(this.skillsRoot());
+        const skill = installed.find(item => item.folder === safeName || sanitizeSkillName(item.name) === safeName);
+        if (!skill) {
+          this.post({ type: 'marketplaceResult', ok: false, text: 'Skill \'' + (message.folder || '') + '\' not found.' });
+          return;
+        }
+        const choice = await this.prompt('Uninstall skill \'' + skill.name + '\'?', 'This removes \'' + skill.name + '\' from your global skills folder. It will no longer be offered to the agent in any workspace.', { ok: 'Uninstall', cancel: 'Cancel', danger: true });
+        if (choice !== 'ok') return;
+        await uninstallSkill(this.skillsRoot(), skill.folder);
+        const sources = this.context.globalState.get<Record<string, string>>('opencodex.skillSources', {}) ?? {};
+        delete sources[skill.folder];
+        await this.context.globalState.update('opencodex.skillSources', sources);
+        this.post({ type: 'marketplaceResult', ok: true, text: '' });
+        await this.sendMarketplaceInstalled();
+      } catch (error) {
+        this.post({ type: 'marketplaceResult', ok: false, text: errorMessage(error) });
+      }
+      return;
+    }
     if (message.type === 'saveSettings') {
       try {
         const searxngUrl = message.searxngUrl.trim().replace(/\/$/, '');
@@ -311,6 +654,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         await this.context.globalState.update('opencodex.searxngUrl', searxngUrl);
         await this.context.globalState.update('opencodex.systemPrompt', message.systemPrompt ?? '');
         await this.context.globalState.update('opencodex.onlyDefaultModels', Boolean(message.onlyDefaultModels));
+        await this.context.globalState.update('opencodex.confirmDelete', message.confirmDelete !== false);
         await this.context.globalState.update('opencodex.setupComplete', true);
         const provider = getProvider(providerId);
         if (provider.isLocal) {
@@ -348,6 +692,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       await this.context.globalState.update('opencodex.searxngUrl', undefined);
       await this.context.globalState.update('opencodex.systemPrompt', undefined);
       await this.context.globalState.update('opencodex.onlyDefaultModels', undefined);
+      await this.context.globalState.update('opencodex.confirmDelete', undefined);
       for (const provider of listProviders()) {
         await this.context.secrets.delete(`opencodex.apiKey.${provider.id}`);
         await this.context.globalState.update(`opencodex.baseUrl.${provider.id}`, undefined);
@@ -376,9 +721,62 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       }
       return;
     }
+    if (message.type === 'revealInOS') {
+      const root = this.workspaceRoot();
+      if (!root) {
+        void vscode.window.showInformationMessage('Open a folder or workspace first.');
+        return;
+      }
+      try {
+        await vscode.commands.executeCommand('revealFileInOS', root);
+      } catch {
+        void vscode.window.showInformationMessage('Could not open the folder in your file explorer.');
+      }
+      return;
+    }
+    if (message.type === 'revealSkill') {
+      const raw = (message.folder || '').trim();
+      if (!raw || raw.includes('/') || raw.includes('\\') || raw === '.' || raw === '..') {
+        void vscode.window.showInformationMessage('Invalid skill folder.');
+        return;
+      }
+      const folderUri = vscode.Uri.joinPath(this.skillsRoot(), raw);
+      try {
+        const stat = await vscode.workspace.fs.stat(folderUri);
+        if ((stat.type & vscode.FileType.Directory) === 0) throw new Error('not a folder');
+      } catch {
+        void vscode.window.showInformationMessage(`Skill '${raw}' is not installed.`);
+        return;
+      }
+      let target = folderUri;
+      for (const fileName of SKILL_FILE_NAMES) {
+        const candidate = vscode.Uri.joinPath(folderUri, fileName);
+        try {
+          const stat = await vscode.workspace.fs.stat(candidate);
+          if ((stat.type & vscode.FileType.File) !== 0) { target = candidate; break; }
+        } catch {}
+      }
+      try {
+        await vscode.commands.executeCommand('revealFileInOS', target);
+      } catch {
+        void vscode.window.showInformationMessage('Could not open the skill in your file explorer.');
+      }
+      return;
+    }
     if (message.type === 'send' && message.text.trim()) {
-      const conversationId = message.conversationId || this.activeConversationId;
-      if (!this.conversations.some(conversation => conversation.id === conversationId)) return;
+      const previousActive = this.activeProjectId;
+      const project = this.ensureProjectForRoot();
+      if (!project) {
+        this.post({ type: 'error', text: 'Open a folder or workspace first.' });
+        return;
+      }
+      if (previousActive !== project.id) this.syncConversations();
+      let conversationId = message.conversationId || project.activeConversationId;
+      if (!project.conversations.some(conversation => conversation.id === conversationId)) {
+        const active = this.activeConversation();
+        if (!active) return;
+        conversationId = active.id;
+      }
       if (this.runs.has(conversationId) || this.runs.size >= MAX_CONCURRENT_RUNS) {
         this.enqueue(message.text.trim(), conversationId);
       } else {
@@ -387,15 +785,17 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     if (message.type === 'retryMessage') {
-      const conversation = this.conversations.find(item => item.id === message.conversationId);
-      if (!conversation || this.runs.has(message.conversationId)) return;
+      const project = this.activeProject();
+      const conversation = project?.conversations.find(item => item.id === message.conversationId);
+      if (!project || !conversation || this.runs.has(message.conversationId)) return;
       const last = conversation.items[conversation.items.length - 1];
       const resume = last?.kind === 'error'
         ? { work: last.work, errorText: last.text }
         : undefined;
       if (last?.kind === 'error') conversation.items.pop();
-      this.activeConversationId = conversation.id;
-      await this.persistConversations();
+      project.activeConversationId = conversation.id;
+      project.updatedAt = Date.now();
+      await this.persistProjects();
       this.syncConversations();
       await this.run('Continue', conversation.id, resume);
     }
@@ -418,11 +818,16 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'error', text: 'Open a folder or workspace first.' });
       return;
     }
+    const project = this.ensureProjectForRoot();
+    if (!project) {
+      this.post({ type: 'error', text: 'Open a folder or workspace first.' });
+      return;
+    }
 
-    let conversation = this.conversations.find(item => item.id === conversationId);
+    let conversation = project.conversations.find(item => item.id === conversationId);
     if (!conversation) {
       conversation = this.createConversation();
-      this.conversations.unshift(conversation);
+      project.conversations.unshift(conversation);
       conversationId = conversation.id;
     }
     const gitTracked = isGitTrackedWorkspace(root.fsPath);
@@ -439,7 +844,8 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'user', conversationId, item: userItem });
     }
     conversation.updatedAt = Date.now();
-    await this.persistConversations();
+    project.updatedAt = Date.now();
+    await this.persistProjects();
     this.syncConversations(false);
     this.post({ type: 'state', conversationId, running: true, label: 'Thinking' });
 
@@ -537,12 +943,21 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         },
       });
 
+      await this.ensureGlobalSkills();
+      const skillBlock = await skillsPromptBlock(this.skillsRoot());
+      const instructions = [
+        this.systemPrompt(root),
+        `- Skills from the SkillsMP marketplace can be installed on request. Use skillsmp_search to find one, skillsmp_get_skill to preview it, and skillsmp_install_skill (it asks the user for approval) to add it to your global skills folder. Installed skills are available to the agent from the next request on; read their SKILL.md before applying them.`,
+        skillBlock,
+      ].filter(Boolean).join('\n\n');
+
       const agent = new ToolLoopAgent({
         model: provider(model),
         maxRetries: 4,
-        instructions: this.systemPrompt(root),
+        instructions,
         tools: buildTools({
           root,
+          skillsDir: this.skillsRoot(),
           config: () => this.config(),
           approve: (kind, title, detail, destructive) => this.approve(kind, title, detail, destructive),
           post: message => this.post(message),
@@ -702,9 +1117,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       conversation.items.push(assistantItem);
       conversation.items = conversation.items.slice(-60);
       conversation.updatedAt = Date.now();
-      await this.persistConversations();
+      project.updatedAt = Date.now();
+      await this.persistProjects();
       finalizePlan();
       this.post({ type: 'done', conversationId, item: assistantItem });
+      systemNotify(this.context, { subtitle: 'Task complete', message: notificationSummary(answer) || conversation.title, kind: 'info' });
     } catch (error) {
       if (run.controller.signal.aborted) {
         if (planState) { planState.interrupted = true; postPlan(); }
@@ -720,9 +1137,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         conversation.items.push(errorItem);
         conversation.items = conversation.items.slice(-60);
         conversation.updatedAt = Date.now();
-        await this.persistConversations();
+        project.updatedAt = Date.now();
+        await this.persistProjects();
         finalizePlan();
         this.post({ type: 'generationError', conversationId, item: errorItem });
+        systemNotify(this.context, { subtitle: 'Task failed', message: notificationSummary(message) || conversation.title, kind: 'attention' });
       }
     } finally {
       this.post({ type: 'liveUsage', conversationId, model: '', provider: '', inputTokens: 0, outputTokens: 0 });
@@ -744,9 +1163,33 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   private async approve(kind: 'edit' | 'command', title: string, detail: string, destructive = false): Promise<void> {
     const mode = this.config().approvalMode;
     if (mode === 'autonomous') return;
-    if (mode === 'edits' && (kind === 'edit' || !destructive)) return;
-    const choice = await vscode.window.showWarningMessage(title, { modal: true, detail }, 'Allow');
-    if (choice !== 'Allow') throw new Error('User denied this action.');
+    if (mode === 'edits' && !destructive) return;
+    systemNotify(this.context, { subtitle: 'Approval needed', message: title, kind: 'attention' });
+    const choice = await this.prompt(title, detail, { ok: 'Allow', cancel: 'Deny', danger: destructive });
+    if (choice !== 'ok') throw new Error('User denied this action.');
+  }
+
+  private async prompt(title: string, detail: string, options: { ok?: string; secondary?: string; cancel?: string; danger?: boolean } = {}): Promise<'ok' | 'secondary' | 'cancel'> {
+    if (!this.view) return 'cancel';
+    const id = ++this.notifySeq;
+    return new Promise(resolve => {
+      this.pendingNotifies.set(id, resolve);
+      this.post({
+        type: 'notify',
+        id,
+        title,
+        detail,
+        okLabel: options.ok ?? 'OK',
+        secondaryLabel: options.secondary,
+        cancelLabel: options.cancel ?? 'Cancel',
+        danger: options.danger ?? false,
+      });
+    });
+  }
+
+  private disposePendingNotifies(): void {
+    for (const resolve of this.pendingNotifies.values()) resolve('cancel');
+    this.pendingNotifies.clear();
   }
 
   private workspaceRoot(): vscode.Uri | undefined {
@@ -830,8 +1273,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
   private systemPrompt(root: vscode.Uri): string {
     const editor = vscode.window.activeTextEditor;
-    const active = editor && editor.document.uri.fsPath.startsWith(root.fsPath)
-      ? path.relative(root.fsPath, editor.document.uri.fsPath)
+    const editorPath = editor?.document.uri.fsPath ?? '';
+    const active = editor && pathInside(root.fsPath, editorPath)
+      ? path.relative(root.fsPath, editorPath)
       : '(none)';
     const selection = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection).slice(0, 6000) : '';
     const base = `You are Opencodex, an autonomous coding agent inside VS Code. Work carefully and persist until the request is complete.\n\nUser OS: ${userOsName()}\nWorkspace: ${root.fsPath}\nActive file: ${active}\n${selection ? `Selected text:\n${selection}\n` : ''}\nRules:\n- For non-trivial tasks, call the plan tool first to present the main design aspects; the plan is shown as a floating card at the top of the chat with the currently executing step highlighted and completed steps checked off.

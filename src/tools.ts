@@ -3,12 +3,14 @@ import * as path from 'node:path';
 import { tool } from 'ai';
 import { z } from 'zod';
 import { runCommand } from './git';
+import { installSkillFromRepository, listInstalledSkills, listRepositorySkills, readSkillMarkdown, resolveInstallPath, sanitizeSkillName, searchSkills } from './skills';
 import { MAX_FILE_BYTES } from './types';
 import type { AppConfig } from './types';
-import { assertNotSecret, isDestructiveCommand, isSecret, truncate } from './util';
+import { assertNotSecret, isDestructiveCommand, isSecret, pathInside, truncate } from './util';
 
 export interface ToolContext {
   root: vscode.Uri;
+  skillsDir: vscode.Uri;
   config(): AppConfig;
   approve(kind: 'edit' | 'command', title: string, detail: string, destructive?: boolean): Promise<void>;
   post(message: unknown): void;
@@ -124,7 +126,7 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
         const uri = ctx.resolvePath(filePath);
         const stat = await vscode.workspace.fs.stat(uri);
         if ((stat.type & vscode.FileType.Directory) !== 0) throw new Error('delete_file only deletes individual files.');
-        await ctx.approve('edit', `Delete ${filePath}?`, reason ?? 'The agent wants to delete this file.');
+        await ctx.approve('edit', `Delete ${filePath}?`, reason ?? 'The agent wants to delete this file.', true);
         await vscode.workspace.fs.delete(uri, { recursive: false, useTrash: false });
         ctx.post({ type: 'changed', path: filePath, action: 'Deleted' });
         return `Deleted ${filePath}.`;
@@ -136,7 +138,7 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
       execute: async ({ limit }) => {
         const rows: string[] = [];
         for (const [uri, diagnostics] of vscode.languages.getDiagnostics()) {
-          if (!uri.fsPath.startsWith(ctx.root.fsPath)) continue;
+          if (!pathInside(ctx.root.fsPath, uri.fsPath)) continue;
           for (const diagnostic of diagnostics) {
             if (rows.length >= limit) break;
             if (diagnostic.severity > vscode.DiagnosticSeverity.Warning) continue;
@@ -156,6 +158,92 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
       },
     }),
   };
+  tools.skillsmp_search = tool({
+    description: 'Search the SkillsMP marketplace for installable AI agent skills (SKILL.md packages). Returns each result with its name, description, star count, author, GitHub source URL, and marketplace URL. Use the returned GitHub source as the source for skillsmp_install_skill or skillsmp_get_skill.',
+    inputSchema: z.object({
+      query: z.string().min(1).describe('Search keywords, e.g. "react testing", "web scraper", "seo".'),
+      limit: z.number().int().min(1).max(50).default(10).describe('Maximum results to return.'),
+      sortBy: z.enum(['stars', 'recent']).default('stars').describe('Sort results by stars or by most recently updated.'),
+    }),
+    execute: async ({ query, limit, sortBy }) => {
+      const { skills, total } = await searchSkills(query, { limit, sortBy }, ctx.abortSignal);
+      if (!skills.length) return `No skills found for '${query}'. Try different keywords.`;
+      return `Found ${total} skills for '${query}' (showing ${skills.length}):\n\n${skills.map((skill, index) => `${index + 1}. ${skill.name} ⭐${skill.stars} by ${skill.author}\n${skill.description}\nGitHub: ${skill.githubUrl || '(unknown)'}\nMarketplace: ${skill.skillUrl}`).join('\n\n')}`;
+    },
+  });
+  tools.skillsmp_list_repo_skills = tool({
+    description: `List the installable skills (SKILL.md folders) available in a GitHub repository. Pass 'owner/repo' or a github.com URL. Use this to discover the exact skill folder name needed by skillsmp_install_skill when you only know the repository.`,
+    inputSchema: z.object({
+      source: z.string().min(1).describe('GitHub repository, e.g. "davila7/claude-code-templates" or "https://github.com/davila7/claude-code-templates".'),
+      branch: z.string().default('main').describe('Git branch (falls back to main/master).'),
+    }),
+    execute: async ({ source, branch }) => {
+      const reference = resolveInstallPath(source, '', branch);
+      const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch, ctx.abortSignal);
+      if (!skills.length) return `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
+      const shown = skills.slice(0, 120);
+      return `${reference.owner}/${reference.repo} has ${skills.length} skills (showing the first ${shown.length}):\n\n${shown.map(skill => `- ${skill.name} (${skill.path})`).join('\n')}${skills.length > shown.length ? `\n… and ${skills.length - shown.length} more.` : ''}`;
+    },
+  });
+  tools.skillsmp_get_skill = tool({
+    description: `Preview a skill's SKILL.md content from a GitHub repository before installing it. Pass the GitHub source from skillsmp_search results (which already points at the skill folder), or pass 'owner/repo' plus the skill's folder path from skillsmp_list_repo_skills. If only a repository is given, lists its skills instead.`,
+    inputSchema: z.object({
+      source: z.string().min(1).describe('GitHub source: a github.com URL with skill path, or "owner/repo".'),
+      path: z.string().optional().describe('Skill folder path inside the repository (omit when source already includes it).'),
+      branch: z.string().default('main').describe('Git branch (falls back to main/master).'),
+    }),
+    execute: async ({ source, path: extraPath, branch }) => {
+      const reference = resolveInstallPath(source, '', branch);
+      const folderPath = extraPath ?? reference.folderPath ?? '';
+      if (!folderPath) {
+        const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch, ctx.abortSignal);
+        if (!skills.length) return `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
+        const shown = skills.slice(0, 120);
+        return `No skill path given. Skills available in ${reference.owner}/${reference.repo} (${skills.length} total):\n\n${shown.map(skill => `- ${skill.name} (${skill.path})`).join('\n')}${skills.length > shown.length ? `\n… and ${skills.length - shown.length} more.` : ''}`;
+      }
+      const { content } = await readSkillMarkdown(reference.owner, reference.repo, reference.branch, folderPath, ctx.abortSignal);
+      return `# ${reference.owner}/${reference.repo} / ${folderPath}\n\n${truncate(content)}`;
+    },
+  });
+  tools.skillsmp_install_skill = tool({
+    description: `Install a skill from a GitHub repository into your global skills folder (Agent Skills format, available in every workspace). Requires user approval. Pass the GitHub source from skillsmp_search results, or 'owner/repo' plus the skill name discovered by skillsmp_list_repo_skills. The skill is then listed in the agent's instructions so it can be applied in this and future requests.`,
+    inputSchema: z.object({
+      source: z.string().min(1).describe('GitHub source: a github.com URL that points at the skill folder, or "owner/repo".'),
+      skill: z.string().optional().describe('Skill folder name inside the repository when source is just "owner/repo".'),
+      branch: z.string().default('main').describe('Git branch (falls back to main/master).'),
+    }),
+    execute: async ({ source, skill, branch }) => {
+      const reference = resolveInstallPath(source, skill ?? '', branch);
+      let folderPath = reference.folderPath;
+      if (!folderPath) {
+        const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch, ctx.abortSignal);
+        const match = skill
+          ? skills.find(candidate => candidate.name === sanitizeSkillName(skill) || candidate.name.toLowerCase() === skill.trim().toLowerCase())
+          : undefined;
+        if (!match) {
+          const shown = skills.slice(0, 120);
+          return skills.length
+            ? `${reference.owner}/${reference.repo} has ${skills.length} skills. Pick one and pass its name: ${shown.map(candidate => `${candidate.name} (${candidate.path})`).join(', ')}${skills.length > shown.length ? `, …(+${skills.length - shown.length} more)` : ''}`
+            : `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
+        }
+        folderPath = match.path;
+      }
+      const installName = sanitizeSkillName(reference.hintedName ?? folderPath.split('/').pop() ?? skill ?? 'skill');
+      await ctx.approve('edit', `Install skill "${installName}"?`, `Source: ${reference.owner}/${reference.repo}${folderPath ? ` (${folderPath})` : ' (repository root)'}\n\nThe skill will be installed into your global skills folder as '${installName}' and is available in every workspace.`);
+      const result = await installSkillFromRepository(ctx.skillsDir, { owner: reference.owner, repo: reference.repo, branch: reference.branch, folderPath, installName }, ctx.abortSignal);
+      ctx.post({ type: 'changed', path: result.skillMdPath });
+      return `Installed skill '${result.name}' (${result.files} files, ${result.bytes} bytes) from ${reference.owner}/${reference.repo} into your global skills folder.\nRead ${result.skillMdPath} before applying the skill. It is offered to the agent automatically from the next request on.`;
+    },
+  });
+  tools.skillsmp_list_installed = tool({
+    description: `List the skills currently installed in your global skills folder. Use this when asked about available skills or before applying one.`,
+    inputSchema: z.object({}),
+    execute: async () => {
+      const installed = await listInstalledSkills(ctx.skillsDir);
+      if (!installed.length) return `No skills installed yet. Use skillsmp_search to find one and skillsmp_install_skill to add it.`;
+      return installed.map(skill => `- ${skill.name}: ${skill.description || '(no description)'} (${skill.folder})`).join('\n');
+    },
+  });
   const endpoint = ctx.config().searxngUrl;
   if (endpoint) {
     tools.web_search = tool({

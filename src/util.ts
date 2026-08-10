@@ -1,6 +1,12 @@
+import * as path from 'node:path';
 import type { Provider } from './providers';
 import { MAX_TOOL_OUTPUT } from './types';
 import type { TranscriptItem, WorkItem } from './types';
+
+export function pathInside(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate);
+  return rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel);
+}
 
 export function createTranscriptItem(role: 'user' | 'assistant', text: string, kind?: 'error', gitTree?: string, work?: WorkItem[], seconds?: number): TranscriptItem {
   return { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role, text, timestamp: Date.now(), kind, gitTree, work, seconds };
@@ -81,11 +87,11 @@ export function truncate(value: string): string {
 export function summarizeInput(input: unknown): string {
   if (!input || typeof input !== 'object') return '';
   const record = input as Record<string, unknown>;
-  return String(record.path ?? record.query ?? record.glob ?? record.command ?? '').slice(0, 100);
+  return String(record.path ?? record.query ?? record.glob ?? record.command ?? record.source ?? record.skill ?? record.skills ?? '').slice(0, 100);
 }
 
 export function humanToolName(name: string): string {
-  return ({ list_files: 'Listing files', read_file: 'Reading file', search_files: 'Searching workspace', write_file: 'Writing file', replace_text: 'Editing file', delete_file: 'Deleting file', get_diagnostics: 'Checking diagnostics', run_command: 'Running command', web_search: 'Searching the web', plan: 'Planning' } as Record<string, string>)[name] ?? name;
+  return ({ list_files: 'Listing files', read_file: 'Reading file', search_files: 'Searching workspace', write_file: 'Writing file', replace_text: 'Editing file', delete_file: 'Deleting file', get_diagnostics: 'Checking diagnostics', run_command: 'Running command', web_search: 'Searching the web', plan: 'Planning', skillsmp_search: 'Searching SkillsMP', skillsmp_list_repo_skills: 'Listing repo skills', skillsmp_get_skill: 'Previewing skill', skillsmp_install_skill: 'Installing skill', skillsmp_list_installed: 'Listing installed skills' } as Record<string, string>)[name] ?? name;
 }
 
 export function toolTask(name: string, input: unknown): string {

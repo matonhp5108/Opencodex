@@ -1,0 +1,10 @@
+.vscode/**
+.opencodex/**
+src/**
+scripts/**
+esbuild.mjs
+tsconfig.json
+.gitignore
+.DS_Store
+dist/extension.js.map
+node_modules/**

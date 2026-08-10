@@ -1,17 +1,11 @@
-// Sanity-check the configured-provider semantics against the real provider registry.
 import { isCompatibleModel, listProviders } from '../src/providers.ts';
 
-// Mirrors AgentViewProvider.providerConfigured: keyless providers always count,
-// cloud providers count once their key is saved (or present as an environment
-// variable), and local servers (Ollama) only count once the user saved a server
-// URL in Settings - they are never assumed to be running.
 const providerConfigured = (provider, apiKeys, baseUrls) => {
   if (provider.isLocal) return Boolean(baseUrls[baseUrlKey(provider.id)]);
   if (!provider.needsApiKey) return true;
   return Boolean(apiKeys[provider.id] || (provider.apiKeyEnvVar ? process.env[provider.apiKeyEnvVar] : ''));
 };
 
-// Mirrors the globalState keys AgentView reads/writes for local server URLs.
 const baseUrlKey = id => `opencodex.baseUrl.${id}`;
 
 const assert = (v, msg) => { if (!v) { console.error('FAIL:', msg); process.exitCode = 1; } else console.log('ok -', msg); };
@@ -27,7 +21,6 @@ assert(byId.opencode.freeSuffix === '-free', 'opencode resolves its free tier li
 assert((byId.opencode.freeModels?.length ?? 0) === 0, 'opencode has no hardcoded model list');
 assert(byId.mistral.freeModels?.length > 0, 'mistral keeps a curated fallback (API exposes no free marker)');
 
-// compatibility filter (shared by all providers)
 const or = byId.openrouter;
 assert(isCompatibleModel(or, 'vendor/model:free', { raw: { supported_parameters: ['temperature', 'tools'], architecture: { output_modalities: ['text'] } } }) === true, 'openrouter: tools+text model passes');
 assert(isCompatibleModel(or, 'vendor/model:free', { raw: { supported_parameters: ['temperature'], architecture: { output_modalities: ['text'] } } }) === false, 'openrouter: model without tool support rejected');
@@ -45,17 +38,14 @@ assert(providerConfigured(byId.openrouter, {}, {}) === false, 'openrouter unconf
 assert(providerConfigured(byId.openrouter, keys, {}) === true, 'openrouter configured once key is saved');
 assert(providerConfigured(byId.groq, keys, {}) === false, 'groq stays unconfigured (no key for it)');
 
-// refreshModels target selection (mirrors agent logic)
 const config = { onlyDefaultModels: true, provider: 'gemini' };
 const targets = config.onlyDefaultModels ? [byId.gemini] : providers.filter(p => providerConfigured(p, keys, savedBaseUrls));
 assert(targets.length === 1 && targets[0].id === 'gemini', 'onlyDefaultModels=true -> default provider only');
 const targetsAll = providers.filter(p => providerConfigured(p, keys, savedBaseUrls)).map(p => p.id);
 assert(targetsAll.includes('opencode') && targetsAll.includes('gemini') && targetsAll.includes('openrouter') && targetsAll.includes('ollama'), 'onlyDefaultModels=false -> every configured provider');
-// Unconfigured local providers are not fetch targets, so they stay invisible in the picker.
 const unconfigured = providers.filter(p => !providerConfigured(p, keys, {})).map(p => p.id);
 assert(byId.ollama.isLocal && unconfigured.includes('ollama'), 'local providers without a saved URL are skipped (invisible) in the picker');
 
-// group sort: default provider first, rest alphabetical
 const groupSort = (groups, defaultId) => groups.sort((a, b) => (a.providerId === defaultId ? -1 : b.providerId === defaultId ? 1 : a.providerName.localeCompare(b.providerName)));
 const sorted = groupSort([
   { providerId: 'ollama', providerName: 'Ollama (local)' },
@@ -64,7 +54,6 @@ const sorted = groupSort([
 ], 'gemini').map(g => g.providerId);
 assert(sorted.join(',') === 'gemini,ollama,opencode', 'default provider first, rest alphabetical by name');
 
-// selected model is kept only when present in a fetched group
 const groups = [
   { providerId: 'opencode', models: ['deepseek-v4-flash-free'] },
   { providerId: 'gemini', models: ['gemini-2.5-flash'] },

@@ -1,6 +1,7 @@
 
 node_modules/
 dist/
+.opencodex/skills/
 *.tsbuildinfo
 *.vsix
 .vscode-test/

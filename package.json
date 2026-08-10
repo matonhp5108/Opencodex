@@ -2,7 +2,7 @@
   "name": "opencodex-agent",
   "displayName": "Opencodex",
   "description": "The hub for free AI agents",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -18,16 +18,11 @@
   ],
   "activationEvents": [
     "onView:opencodex.chat",
-    "onCommand:opencodex.openChat"
+    "onCommand:opencodex.openChat",
+    "onCommand:opencodex.testSystemNotification"
   ],
   "main": "./dist/extension.js",
   "icon": "media/icon.png",
-  "files": [
-    "dist/extension.js",
-    "media/**",
-    "README.md",
-    "LICENSE"
-  ],
   "contributes": {
     "viewsContainers": {
       "secondarySidebar": [
@@ -67,8 +62,16 @@
         "title": "Opencodex: Show Token Usage"
       },
       {
+        "command": "opencodex.marketplace",
+        "title": "Opencodex: Skill Marketplace"
+      },
+      {
         "command": "opencodex.clear",
         "title": "Opencodex: New Chat"
+      },
+      {
+        "command": "opencodex.testSystemNotification",
+        "title": "Opencodex: Test System Notification"
       }
     ],
     "menus": {
@@ -89,7 +92,14 @@
         },
         "opencodex.provider": {
           "type": "string",
-          "enum": ["opencode", "openrouter", "groq", "gemini", "mistral", "ollama"],
+          "enum": [
+            "opencode",
+            "openrouter",
+            "groq",
+            "gemini",
+            "mistral",
+            "ollama"
+          ],
           "default": "opencode",
           "description": "Free model provider to use. OpenCode works anonymously; the other providers need an API key saved in Settings (or a matching environment variable)."
         },
@@ -102,7 +112,11 @@
         },
         "opencodex.approvalMode": {
           "type": "string",
-          "enum": ["ask", "edits", "autonomous"],
+          "enum": [
+            "ask",
+            "edits",
+            "autonomous"
+          ],
           "default": "ask",
           "description": "Controls whether file edits and commands require confirmation. 'Auto edits' still asks before destructive commands; 'Open access' runs everything without confirmation."
         },
@@ -115,6 +129,11 @@
           "type": "string",
           "default": "",
           "description": "Comma-separated model IDs to treat as free for the selected provider, in addition to the ones detected automatically."
+        },
+        "opencodex.systemNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show native Opencodex system notifications (task completed, approval needed, task failed) when VS Code is not focused."
         }
       }
     }
@@ -123,7 +142,7 @@
     "check": "tsc --noEmit",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "package": "npm run check && npm run build && vsce package --no-dependencies"
+    "package": "npm run check && npm run build && vsce package"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.26",
