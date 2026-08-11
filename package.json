@@ -2,7 +2,7 @@
   "name": "opencodex-agent",
   "displayName": "Opencodex",
   "description": "A free, open-source coding agent inside VS Code.",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -13,8 +13,31 @@
     "url": "https://github.com/matonhp5108/Opencodex"
   },
   "categories": [
+    "AI",
     "Machine Learning",
-    "Programming Languages"
+    "Programming Languages",
+    "Chat",
+    "Data Science",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "coding agent",
+    "codex",
+    "chat",
+    "copilot",
+    "automation",
+    "open source",
+    "free",
+    "llm",
+    "mcp",
+    "ollama",
+    "openrouter",
+    "gemini",
+    "mistral",
+    "groq",
+    "vscode extension",
+    "developer tools"
   ],
   "activationEvents": [
     "onView:opencodex.chat",
