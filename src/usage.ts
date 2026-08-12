@@ -6,6 +6,31 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RECORDS = 5000;
 const RETENTION_MS = 90 * DAY_MS;
 
+const FIRST_USE_KEY = 'opencodex.firstUseAt';
+const STAR_PROMPTED_KEY = 'opencodex.starPrompted';
+const GITHUB_URL = 'https://github.com/matonhp5108/Opencodex';
+
+export function markFirstUse(context: vscode.ExtensionContext): void {
+  if (context.globalState.get<number>(FIRST_USE_KEY)) return;
+  void context.globalState.update(FIRST_USE_KEY, Date.now());
+}
+
+export function maybePromptForStar(context: vscode.ExtensionContext, onPrompt?: (message: string) => void): void {
+  if (context.globalState.get<boolean>(STAR_PROMPTED_KEY, false)) return;
+  let firstUse = context.globalState.get<number>(FIRST_USE_KEY, 0);
+  if (!firstUse) {
+    firstUse = Date.now();
+    void context.globalState.update(FIRST_USE_KEY, firstUse);
+    return;
+  }
+  if (Date.now() - firstUse < DAY_MS) return;
+  void context.globalState.update(STAR_PROMPTED_KEY, true);
+  onPrompt?.('Enjoying Opencodex? Consider starring the repo.');
+  void vscode.window.showInformationMessage('Enjoying Opencodex? Consider starring the repo on GitHub.', 'Star on GitHub').then(choice => {
+    if (choice === 'Star on GitHub') void vscode.env.openExternal(vscode.Uri.parse(GITHUB_URL));
+  });
+}
+
 export function loadUsage(context: vscode.ExtensionContext): UsageRecord[] {
   const stored = context.globalState.get<unknown[]>(USAGE_STORAGE_KEY, []);
   return Array.isArray(stored)

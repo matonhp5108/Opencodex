@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { AgentViewProvider } from './agent';
-import { systemNotify } from './notifications';
 
 async function revealChat(): Promise<void> {
   try {
@@ -25,10 +24,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('opencodex.memory', () => provider.openMemory()),
     vscode.commands.registerCommand('opencodex.marketplace', () => provider.openMarketplace()),
     vscode.commands.registerCommand('opencodex.clear', () => provider.clear()),
-    vscode.commands.registerCommand('opencodex.testSystemNotification', () => {
-      systemNotify(context, { subtitle: 'Opencodex', message: 'This is a test system notification from Opencodex. If you can read this, native notifications are working.', kind: 'info' });
-      void vscode.window.showInformationMessage('Test system notification sent. (Notifications only appear when VS Code is not focused.)');
-    }),
   );
 }
 

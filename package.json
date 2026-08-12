@@ -2,7 +2,7 @@
   "name": "opencodex-agent",
   "displayName": "Opencodex",
   "description": "A free, open-source coding agent inside VS Code.",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -42,7 +42,8 @@
   "activationEvents": [
     "onView:opencodex.chat",
     "onCommand:opencodex.openChat",
-    "onCommand:opencodex.testSystemNotification"
+    "onCommand:opencodex.testSystemNotification",
+    "onCommand:opencodex.testStarPrompt"
   ],
   "main": "./dist/extension.js",
   "icon": "media/icon.png",
@@ -99,6 +100,10 @@
       {
         "command": "opencodex.testSystemNotification",
         "title": "Opencodex: Test System Notification"
+      },
+      {
+        "command": "opencodex.testStarPrompt",
+        "title": "Opencodex: Test Star Prompt"
       }
     ],
     "menus": {

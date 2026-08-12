@@ -13,7 +13,7 @@ import { MAX_FILE_BYTES, MAX_PERSISTED_REASONING } from './types';
 import { conversationTitle, createTranscriptItem, errorMessage, friendlyError, humanToolName, isSecret, normalizeApprovalMode, normalizeTranscriptItem, pathInside, providerErrorMessage, shouldAutoContinue, toolTask, truncate } from './util';
 import { getWebviewHtml } from './webview';
 import { systemNotify } from './notifications';
-import { aggregateUsage, loadUsage, recordUsage } from './usage';
+import { aggregateUsage, loadUsage, markFirstUse, maybePromptForStar, recordUsage } from './usage';
 import { connectMcpServers, parseMcpServers, type McpConnection } from './mcp';
 import { TerminalManager } from './terminal';
 import { MEMORY_RELATIVE_PATH, openProjectMemory, readProjectMemory, writeProjectMemory } from './memory';
@@ -163,6 +163,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
   private sendUsage(): void {
     this.post({ type: 'usage', ...aggregateUsage(loadUsage(this.context)) });
+  }
+
+  private maybePromptForStar(): void {
+    maybePromptForStar(this.context);
   }
 
   openMarketplace(): void {
@@ -440,6 +444,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       await this.refreshModels();
       await this.maybeShowFirstLaunchSettings();
       this.sendUsage();
+      this.maybePromptForStar();
       this.sendEditorContext();
       return;
     }
@@ -818,6 +823,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     if (message.type === 'send' && message.text.trim()) {
+      markFirstUse(this.context);
       const previousActive = this.activeProjectId;
       const project = this.ensureProjectForRoot();
       if (!project) {
@@ -1233,6 +1239,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         streamPrompt = `Continue the original coding request from exactly where you stopped. Do not mention this instruction, do not repeat prior text, and do not stop after describing the next action. Use tools to complete all remaining work, verify it, and only then give the concise final summary.\n\nOriginal request:\n${userText}\n\nWork shown so far:\n${answer.slice(-8_000)}`;
       } while (continuationCount < 2 && !run.controller.signal.aborted);
       this.sendUsage();
+      this.maybePromptForStar();
       if (!answer.trim()) answer = '(No response)';
       if (reasoningBuffer.trim()) work.push({ kind: 'reasoning', text: reasoningBuffer + (reasoningTruncated ? '\n…(truncated)' : '') });
       const keptWork = work.slice(-80);
