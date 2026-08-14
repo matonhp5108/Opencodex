@@ -1,65 +1,151 @@
-import * as vscode from 'vscode';
-import * as path from 'node:path';
-import { tool } from 'ai';
-import { z } from 'zod';
-import { runCommand } from './git';
-import { installSkillFromRepository, listInstalledSkills, listRepositorySkills, readSkillMarkdown, resolveInstallPath, sanitizeSkillName, searchSkills } from './skills';
-import { MAX_FILE_BYTES } from './types';
-import type { AppConfig } from './types';
-import { assertNotSecret, isDestructiveCommand, isSecret, pathInside, truncate } from './util';
-import type { TerminalManager } from './terminal';
+import * as vscode from "vscode";
+import * as path from "node:path";
+import { tool } from "ai";
+import { z } from "zod";
+import { runCommand } from "./git";
+import {
+  installSkillFromRepository,
+  listInstalledSkills,
+  listRepositorySkills,
+  readSkillMarkdown,
+  resolveInstallPath,
+  sanitizeSkillName,
+  searchSkills,
+} from "./skills";
+import { MAX_FILE_BYTES } from "./types";
+import type { AppConfig } from "./types";
+import {
+  assertNotSecret,
+  isDestructiveCommand,
+  isSecret,
+  pathInside,
+  truncate,
+} from "./util";
+import type { TerminalManager } from "./terminal";
 
 export interface ToolContext {
   root: vscode.Uri;
   skillsDir: vscode.Uri;
   config(): AppConfig;
-  approve(kind: 'edit' | 'command', title: string, detail: string, destructive?: boolean): Promise<void>;
-  reviewEdit?(filePath: string, before: string, after: string, reason: string, destructive?: boolean): Promise<void>;
+  approve(
+    kind: "edit" | "command",
+    title: string,
+    detail: string,
+    destructive?: boolean,
+  ): Promise<void>;
+  reviewEdit?(
+    filePath: string,
+    before: string,
+    after: string,
+    reason: string,
+    destructive?: boolean,
+  ): Promise<void>;
   post(message: unknown): void;
   resolvePath(filePath: string): vscode.Uri;
   describePlan(): string;
   abortSignal?: AbortSignal;
   terminals?: TerminalManager;
-  delegate?: (role: 'explorer' | 'reviewer' | 'worker', task: string, context?: string) => Promise<string>;
-  memory?: { path: string; read(): Promise<string>; write(content: string, reason?: string): Promise<void> };
+  delegate?: (
+    role: "explorer" | "reviewer" | "worker",
+    task: string,
+    context?: string,
+  ) => Promise<string>;
+  memory?: {
+    path: string;
+    read(): Promise<string>;
+    write(content: string, reason?: string): Promise<void>;
+  };
 }
 
 export function buildTools(ctx: ToolContext): Record<string, any> {
   const tools: Record<string, any> = {
     plan: tool({
-      description: 'Call this first for any non-trivial task. Present the main design aspects as an ordered plan: what will change, which files are involved, and how each part will be verified. The plan is shown as a floating card pinned to the top of the chat with the currently executing step spinning and completed steps checked off. IMPORTANT: the plan tool is STATEFUL and there is NO auto-advancement - the plan NEVER moves forward on its own, and previously completed steps stay checked. The result of every call returns the complete current plan back to you, so you always know its exact state. After finishing each step you MUST re-call this tool and pass doneSteps (0-based indices of every step now completed, including the one you just finished) plus activeStep (0-based index of the step you are now working on). Pass steps and title only when creating a plan or explicitly rewriting it; progress updates may omit them.',
+      description:
+        "Call this first for any non-trivial task. Present the main design aspects as an ordered plan: what will change, which files are involved, and how each part will be verified. The plan is shown as a floating card pinned to the top of the chat with the currently executing step spinning and completed steps checked off. IMPORTANT: the plan tool is STATEFUL and there is NO auto-advancement - the plan NEVER moves forward on its own, and previously completed steps stay checked. The result of every call returns the complete current plan back to you, so you always know its exact state. After finishing each step you MUST re-call this tool and pass doneSteps (0-based indices of every step now completed, including the one you just finished) plus activeStep (0-based index of the step you are now working on). Pass steps and title only when creating a plan or explicitly rewriting it; progress updates may omit them.",
       inputSchema: z.object({
-        title: z.string().min(1).max(120).optional().describe('Short plan title, e.g. "Add multi-provider support". Omit for progress updates on an existing plan.'),
-        steps: z.array(z.string().min(1)).min(1).max(12).optional().describe('Ordered steps covering the main design aspects. Omit for progress updates on an existing plan.'),
-        activeStep: z.number().int().min(0).max(12).optional().describe('0-based index of the step you are currently working on. Pass this explicitly on EVERY plan call - the index never advances on its own.'),
-        doneSteps: z.array(z.number().int().min(0).max(12)).optional().describe('0-based indices of steps already completed. Include every step you just finished, or it stays unchecked; previously completed steps are merged in automatically.'),
+        title: z
+          .string()
+          .min(1)
+          .max(120)
+          .optional()
+          .describe(
+            'Short plan title, e.g. "Add multi-provider support". Omit for progress updates on an existing plan.',
+          ),
+        steps: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(12)
+          .optional()
+          .describe(
+            "Ordered steps covering the main design aspects. Omit for progress updates on an existing plan.",
+          ),
+        activeStep: z
+          .number()
+          .int()
+          .min(0)
+          .max(12)
+          .optional()
+          .describe(
+            "0-based index of the step you are currently working on. Pass this explicitly on EVERY plan call - the index never advances on its own.",
+          ),
+        doneSteps: z
+          .array(z.number().int().min(0).max(12))
+          .optional()
+          .describe(
+            "0-based indices of steps already completed. Include every step you just finished, or it stays unchecked; previously completed steps are merged in automatically.",
+          ),
       }),
       execute: async () => ctx.describePlan(),
     }),
     list_files: tool({
-      description: 'List workspace files matching a glob. Excludes dependencies and Git metadata.',
-      inputSchema: z.object({ glob: z.string().default('**/*'), limit: z.number().int().min(1).max(500).default(200) }),
+      description:
+        "List workspace files matching a glob. Excludes dependencies and Git metadata.",
+      inputSchema: z.object({
+        glob: z.string().default("**/*"),
+        limit: z.number().int().min(1).max(500).default(200),
+      }),
       execute: async ({ glob, limit }) => {
-        const files = await vscode.workspace.findFiles(glob, '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**}', limit);
-        return files.map(uri => path.relative(ctx.root.fsPath, uri.fsPath)).join('\n') || '(no files)';
+        const files = await vscode.workspace.findFiles(
+          glob,
+          "{**/node_modules/**,**/.git/**,**/dist/**,**/build/**}",
+          limit,
+        );
+        return (
+          files
+            .map((uri) => path.relative(ctx.root.fsPath, uri.fsPath))
+            .join("\n") || "(no files)"
+        );
       },
     }),
     read_file: tool({
-      description: 'Read a UTF-8 text file from the workspace. Secret env files are blocked.',
+      description:
+        "Read a UTF-8 text file from the workspace. Secret env files are blocked.",
       inputSchema: z.object({ path: z.string() }),
       execute: async ({ path: filePath }) => {
         assertNotSecret(filePath);
         const uri = ctx.resolvePath(filePath);
         const stat = await vscode.workspace.fs.stat(uri);
-        if (stat.size > MAX_FILE_BYTES) throw new Error(`File is too large (${stat.size} bytes).`);
-        return truncate(new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)));
+        if (stat.size > MAX_FILE_BYTES)
+          throw new Error(`File is too large (${stat.size} bytes).`);
+        return truncate(
+          new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)),
+        );
       },
     }),
     search_files: tool({
-      description: 'Search text across workspace files using a plain text query.',
-      inputSchema: z.object({ query: z.string().min(1), glob: z.string().default('**/*'), limit: z.number().int().min(1).max(200).default(80) }),
+      description:
+        "Search text across workspace files using a plain text query.",
+      inputSchema: z.object({
+        query: z.string().min(1),
+        glob: z.string().default("**/*"),
+        limit: z.number().int().min(1).max(200).default(80),
+      }),
       execute: async ({ query, glob, limit }) => {
-        const files = await vscode.workspace.findFiles(glob, '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**}', 500);
+        const files = await vscode.workspace.findFiles(
+          glob,
+          "{**/node_modules/**,**/.git/**,**/dist/**,**/build/**}",
+          500,
+        );
         const hits: string[] = [];
         for (const uri of files) {
           if (hits.length >= limit) break;
@@ -67,246 +153,503 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
           try {
             const stat = await vscode.workspace.fs.stat(uri);
             if (stat.size > MAX_FILE_BYTES) continue;
-            const lines = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)).split(/\r?\n/);
+            const lines = new TextDecoder()
+              .decode(await vscode.workspace.fs.readFile(uri))
+              .split(/\r?\n/);
             lines.forEach((line, index) => {
-              if (hits.length < limit && line.toLowerCase().includes(query.toLowerCase())) {
-                hits.push(`${path.relative(ctx.root.fsPath, uri.fsPath)}:${index + 1}: ${line.trim().slice(0, 300)}`);
+              if (
+                hits.length < limit &&
+                line.toLowerCase().includes(query.toLowerCase())
+              ) {
+                hits.push(
+                  `${path.relative(ctx.root.fsPath, uri.fsPath)}:${index + 1}: ${line.trim().slice(0, 300)}`,
+                );
               }
             });
           } catch {}
         }
-        return hits.join('\n') || '(no matches)';
+        return hits.join("\n") || "(no matches)";
       },
     }),
     write_file: tool({
-      description: 'Create or completely replace a workspace text file. Requires user approval.',
-      inputSchema: z.object({ path: z.string(), content: z.string(), reason: z.string().optional() }),
+      description:
+        "Create or completely replace a workspace text file. Requires user approval.",
+      inputSchema: z.object({
+        path: z.string(),
+        content: z.string(),
+        reason: z.string().optional(),
+      }),
       execute: async ({ path: filePath, content, reason }) => {
         assertNotSecret(filePath);
         const uri = ctx.resolvePath(filePath);
         const edit = new vscode.WorkspaceEdit();
         let exists = true;
-        try { await vscode.workspace.fs.stat(uri); } catch { exists = false; }
-        const before = exists ? (await vscode.workspace.openTextDocument(uri)).getText() : '';
-        if (ctx.reviewEdit) await ctx.reviewEdit(filePath, before, content, reason ?? 'The agent wants to create or replace this file.');
-        else await ctx.approve('edit', `Write ${filePath}?`, reason ?? 'The agent wants to create or replace this file.');
+        try {
+          await vscode.workspace.fs.stat(uri);
+        } catch {
+          exists = false;
+        }
+        const before = exists
+          ? (await vscode.workspace.openTextDocument(uri)).getText()
+          : "";
+        if (ctx.reviewEdit)
+          await ctx.reviewEdit(
+            filePath,
+            before,
+            content,
+            reason ?? "The agent wants to create or replace this file.",
+          );
+        else
+          await ctx.approve(
+            "edit",
+            `Write ${filePath}?`,
+            reason ?? "The agent wants to create or replace this file.",
+          );
         if (exists) {
           const document = await vscode.workspace.openTextDocument(uri);
-          if (document.getText() !== before) throw new Error(`${filePath} changed while the proposed edit was being reviewed. Read it again before editing.`);
+          if (document.getText() !== before)
+            throw new Error(
+              `${filePath} changed while the proposed edit was being reviewed. Read it again before editing.`,
+            );
           const end = document.positionAt(document.getText().length);
-          edit.replace(uri, new vscode.Range(new vscode.Position(0, 0), end), content);
+          edit.replace(
+            uri,
+            new vscode.Range(new vscode.Position(0, 0), end),
+            content,
+          );
         } else {
-          await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(uri.fsPath)));
+          await vscode.workspace.fs.createDirectory(
+            vscode.Uri.file(path.dirname(uri.fsPath)),
+          );
           edit.createFile(uri, { ignoreIfExists: false });
           edit.insert(uri, new vscode.Position(0, 0), content);
         }
-        if (!await vscode.workspace.applyEdit(edit)) throw new Error('VS Code rejected the edit.');
+        if (!(await vscode.workspace.applyEdit(edit)))
+          throw new Error("VS Code rejected the edit.");
         await vscode.workspace.saveAll(false);
-        ctx.post({ type: 'changed', path: filePath });
+        ctx.post({ type: "changed", path: filePath });
         return `Wrote ${filePath} (${content.length} characters).`;
       },
     }),
     replace_text: tool({
-      description: 'Replace one exact text occurrence in a workspace file. Requires user approval.',
-      inputSchema: z.object({ path: z.string(), oldText: z.string().min(1), newText: z.string(), reason: z.string().optional() }),
+      description:
+        "Replace one exact text occurrence in a workspace file. Requires user approval.",
+      inputSchema: z.object({
+        path: z.string(),
+        oldText: z.string().min(1),
+        newText: z.string(),
+        reason: z.string().optional(),
+      }),
       execute: async ({ path: filePath, oldText, newText, reason }) => {
         assertNotSecret(filePath);
         const uri = ctx.resolvePath(filePath);
         const document = await vscode.workspace.openTextDocument(uri);
         const source = document.getText();
         const first = source.indexOf(oldText);
-        if (first < 0) throw new Error('Exact oldText was not found. Read the file again.');
-        if (source.indexOf(oldText, first + oldText.length) >= 0) throw new Error('oldText occurs more than once; provide a larger unique block.');
-        const proposed = source.slice(0, first) + newText + source.slice(first + oldText.length);
-        if (ctx.reviewEdit) await ctx.reviewEdit(filePath, source, proposed, reason ?? 'The agent wants to replace one block of text.');
-        else await ctx.approve('edit', `Edit ${filePath}?`, reason ?? 'The agent wants to replace one block of text.');
-        if (document.getText() !== source) throw new Error(`${filePath} changed while the proposed edit was being reviewed. Read it again before editing.`);
+        if (first < 0)
+          throw new Error("Exact oldText was not found. Read the file again.");
+        if (source.indexOf(oldText, first + oldText.length) >= 0)
+          throw new Error(
+            "oldText occurs more than once; provide a larger unique block.",
+          );
+        const proposed =
+          source.slice(0, first) +
+          newText +
+          source.slice(first + oldText.length);
+        if (ctx.reviewEdit)
+          await ctx.reviewEdit(
+            filePath,
+            source,
+            proposed,
+            reason ?? "The agent wants to replace one block of text.",
+          );
+        else
+          await ctx.approve(
+            "edit",
+            `Edit ${filePath}?`,
+            reason ?? "The agent wants to replace one block of text.",
+          );
+        if (document.getText() !== source)
+          throw new Error(
+            `${filePath} changed while the proposed edit was being reviewed. Read it again before editing.`,
+          );
         const edit = new vscode.WorkspaceEdit();
-        edit.replace(uri, new vscode.Range(document.positionAt(first), document.positionAt(first + oldText.length)), newText);
-        if (!await vscode.workspace.applyEdit(edit)) throw new Error('VS Code rejected the edit.');
+        edit.replace(
+          uri,
+          new vscode.Range(
+            document.positionAt(first),
+            document.positionAt(first + oldText.length),
+          ),
+          newText,
+        );
+        if (!(await vscode.workspace.applyEdit(edit)))
+          throw new Error("VS Code rejected the edit.");
         await document.save();
-        ctx.post({ type: 'changed', path: filePath });
+        ctx.post({ type: "changed", path: filePath });
         return `Updated ${filePath}.`;
       },
     }),
     delete_file: tool({
-      description: 'Delete one workspace file. Requires user approval.',
-      inputSchema: z.object({ path: z.string(), reason: z.string().optional() }),
+      description: "Delete one workspace file. Requires user approval.",
+      inputSchema: z.object({
+        path: z.string(),
+        reason: z.string().optional(),
+      }),
       execute: async ({ path: filePath, reason }) => {
         assertNotSecret(filePath);
         const uri = ctx.resolvePath(filePath);
         const stat = await vscode.workspace.fs.stat(uri);
-        if ((stat.type & vscode.FileType.Directory) !== 0) throw new Error('delete_file only deletes individual files.');
-        const before = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
-        if (ctx.reviewEdit) await ctx.reviewEdit(filePath, before, '', reason ?? 'The agent wants to delete this file.', true);
-        else await ctx.approve('edit', `Delete ${filePath}?`, reason ?? 'The agent wants to delete this file.', true);
-        const current = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
-        if (current !== before) throw new Error(`${filePath} changed while its deletion was being reviewed. Read it again before deleting.`);
-        await vscode.workspace.fs.delete(uri, { recursive: false, useTrash: false });
-        ctx.post({ type: 'changed', path: filePath, action: 'Deleted' });
+        if ((stat.type & vscode.FileType.Directory) !== 0)
+          throw new Error("delete_file only deletes individual files.");
+        const before = new TextDecoder().decode(
+          await vscode.workspace.fs.readFile(uri),
+        );
+        if (ctx.reviewEdit)
+          await ctx.reviewEdit(
+            filePath,
+            before,
+            "",
+            reason ?? "The agent wants to delete this file.",
+            true,
+          );
+        else
+          await ctx.approve(
+            "edit",
+            `Delete ${filePath}?`,
+            reason ?? "The agent wants to delete this file.",
+            true,
+          );
+        const current = new TextDecoder().decode(
+          await vscode.workspace.fs.readFile(uri),
+        );
+        if (current !== before)
+          throw new Error(
+            `${filePath} changed while its deletion was being reviewed. Read it again before deleting.`,
+          );
+        await vscode.workspace.fs.delete(uri, {
+          recursive: false,
+          useTrash: false,
+        });
+        ctx.post({ type: "changed", path: filePath, action: "Deleted" });
         return `Deleted ${filePath}.`;
       },
     }),
     get_diagnostics: tool({
-      description: 'Return current VS Code errors and warnings for the workspace.',
-      inputSchema: z.object({ limit: z.number().int().min(1).max(200).default(100) }),
+      description:
+        "Return current VS Code errors and warnings for the workspace.",
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(200).default(100),
+      }),
       execute: async ({ limit }) => {
         const rows: string[] = [];
         for (const [uri, diagnostics] of vscode.languages.getDiagnostics()) {
           if (!pathInside(ctx.root.fsPath, uri.fsPath)) continue;
           for (const diagnostic of diagnostics) {
             if (rows.length >= limit) break;
-            if (diagnostic.severity > vscode.DiagnosticSeverity.Warning) continue;
-            rows.push(`${path.relative(ctx.root.fsPath, uri.fsPath)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} ${diagnostic.severity === 0 ? 'error' : 'warning'}: ${diagnostic.message}`);
+            if (diagnostic.severity > vscode.DiagnosticSeverity.Warning)
+              continue;
+            rows.push(
+              `${path.relative(ctx.root.fsPath, uri.fsPath)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} ${diagnostic.severity === 0 ? "error" : "warning"}: ${diagnostic.message}`,
+            );
           }
         }
-        return rows.join('\n') || '(no errors or warnings)';
+        return rows.join("\n") || "(no errors or warnings)";
       },
     }),
     run_command: tool({
-      description: 'Run a shell command in the workspace and return output. Destructive commands (deleting files, discarding Git changes, force-pushing, wiping data) require user approval in auto-edit mode.',
-      inputSchema: z.object({ command: z.string().min(1), reason: z.string().optional(), timeoutSeconds: z.number().min(1).max(120).default(30) }),
+      description:
+        "Run a shell command in the workspace and return output. Destructive commands (deleting files, discarding Git changes, force-pushing, wiping data) require user approval in auto-edit mode.",
+      inputSchema: z.object({
+        command: z.string().min(1),
+        reason: z.string().optional(),
+        timeoutSeconds: z.number().min(1).max(120).default(30),
+      }),
       execute: async ({ command, reason, timeoutSeconds }) => {
-        await ctx.approve('command', 'Run command?', `${command}\n\n${reason ?? ''}`, isDestructiveCommand(command));
-        ctx.post({ type: 'command', command });
-        return runCommand(command, ctx.root.fsPath, timeoutSeconds * 1000, ctx.abortSignal);
+        await ctx.approve(
+          "command",
+          "Run command?",
+          `${command}\n\n${reason ?? ""}`,
+          isDestructiveCommand(command),
+        );
+        ctx.post({ type: "command", command });
+        return runCommand(
+          command,
+          ctx.root.fsPath,
+          timeoutSeconds * 1000,
+          ctx.abortSignal,
+        );
       },
     }),
   };
   if (ctx.delegate) {
     tools.delegate_task = tool({
-      description: 'Delegate a bounded task to a specialized subagent with its own context window. Use explorer for repository research, reviewer for independent critique, and worker for a focused implementation or verification task. The subagent returns a concise result to this conversation.',
+      description:
+        "Delegate a bounded task to a specialized subagent with its own context window. Use explorer for repository research, reviewer for independent critique, and worker for a focused implementation or verification task. The subagent returns a concise result to this conversation.",
       inputSchema: z.object({
-        role: z.enum(['explorer', 'reviewer', 'worker']),
+        role: z.enum(["explorer", "reviewer", "worker"]),
         task: z.string().min(1),
-        context: z.string().optional().describe('Only the context the subagent needs; it does not receive the parent conversation.'),
+        context: z
+          .string()
+          .optional()
+          .describe(
+            "Only the context the subagent needs; it does not receive the parent conversation.",
+          ),
       }),
-      execute: async ({ role, task, context }) => ctx.delegate?.(role, task, context),
+      execute: async ({ role, task, context }) =>
+        ctx.delegate?.(role, task, context),
     });
   }
   if (ctx.terminals) {
     tools.terminal_start = tool({
-      description: 'Start a named persistent shell session in the workspace. The session remains available across tool calls and conversations until stopped or VS Code closes.',
-      inputSchema: z.object({ name: z.string().min(1).max(60), command: z.string().optional() }),
+      description:
+        "Start a named persistent shell session in the workspace. The session remains available across tool calls and conversations until stopped or VS Code closes.",
+      inputSchema: z.object({
+        name: z.string().min(1).max(60),
+        command: z.string().optional(),
+      }),
       execute: async ({ name, command }) => {
-        if (command?.trim()) await ctx.approve('command', `Start terminal '${name}'?`, command, isDestructiveCommand(command));
+        if (command?.trim())
+          await ctx.approve(
+            "command",
+            `Start terminal '${name}'?`,
+            command,
+            isDestructiveCommand(command),
+          );
         return ctx.terminals?.start(name, ctx.root.fsPath, command);
       },
     });
     tools.terminal_write = tool({
-      description: 'Write input to a persistent terminal. Include a trailing newline to submit a shell command.',
-      inputSchema: z.object({ name: z.string().min(1), input: z.string().min(1) }),
+      description:
+        "Write input to a persistent terminal. Include a trailing newline to submit a shell command.",
+      inputSchema: z.object({
+        name: z.string().min(1),
+        input: z.string().min(1),
+      }),
       execute: async ({ name, input }) => {
-        await ctx.approve('command', `Write to terminal '${name}'?`, input, isDestructiveCommand(input));
+        await ctx.approve(
+          "command",
+          `Write to terminal '${name}'?`,
+          input,
+          isDestructiveCommand(input),
+        );
         return ctx.terminals?.write(name, input);
       },
     });
     tools.terminal_read = tool({
-      description: 'Read output from a persistent terminal. Pass the returned cursor on the next read to receive only new output.',
-      inputSchema: z.object({ name: z.string().min(1), cursor: z.number().int().min(0).default(0) }),
-      execute: async ({ name, cursor }) => JSON.stringify(ctx.terminals?.read(name, cursor), null, 2),
+      description:
+        "Read output from a persistent terminal. Pass the returned cursor on the next read to receive only new output.",
+      inputSchema: z.object({
+        name: z.string().min(1),
+        cursor: z.number().int().min(0).default(0),
+      }),
+      execute: async ({ name, cursor }) =>
+        JSON.stringify(ctx.terminals?.read(name, cursor), null, 2),
     });
     tools.terminal_list = tool({
-      description: 'List persistent terminal sessions and whether each is still running.',
+      description:
+        "List persistent terminal sessions and whether each is still running.",
       inputSchema: z.object({}),
       execute: async () => JSON.stringify(ctx.terminals?.list() ?? [], null, 2),
     });
     tools.terminal_stop = tool({
-      description: 'Stop one persistent terminal session.',
+      description: "Stop one persistent terminal session.",
       inputSchema: z.object({ name: z.string().min(1) }),
       execute: async ({ name }) => ctx.terminals?.stop(name),
     });
   }
   if (ctx.memory) {
     tools.memory_read = tool({
-      description: 'Read durable project memory containing established decisions, conventions, and user preferences.',
+      description:
+        "Read durable project memory containing established decisions, conventions, and user preferences.",
       inputSchema: z.object({}),
-      execute: async () => (await ctx.memory?.read()) || '(project memory is empty)',
+      execute: async () =>
+        (await ctx.memory?.read()) || "(project memory is empty)",
     });
     tools.memory_update = tool({
-      description: 'Replace durable project memory after reading it. Preserve useful existing entries, keep it concise, and never store credentials or secrets.',
-      inputSchema: z.object({ content: z.string().max(24_000), reason: z.string().optional() }),
+      description:
+        "Replace durable project memory after reading it. Preserve useful existing entries, keep it concise, and never store credentials or secrets.",
+      inputSchema: z.object({
+        content: z.string().max(24_000),
+        reason: z.string().optional(),
+      }),
       execute: async ({ content, reason }) => {
         await ctx.memory?.write(content, reason);
-        ctx.post({ type: 'changed', path: ctx.memory?.path });
+        ctx.post({ type: "changed", path: ctx.memory?.path });
         return `Updated ${ctx.memory?.path}.`;
       },
     });
   }
   tools.skillsmp_search = tool({
-    description: 'Search the SkillsMP marketplace for installable AI agent skills (SKILL.md packages). Returns each result with its name, description, star count, author, GitHub source URL, and marketplace URL. Use the returned GitHub source as the source for skillsmp_install_skill or skillsmp_get_skill.',
+    description:
+      "Search the SkillsMP marketplace for installable AI agent skills (SKILL.md packages). Returns each result with its name, description, star count, author, GitHub source URL, and marketplace URL. Use the returned GitHub source as the source for skillsmp_install_skill or skillsmp_get_skill.",
     inputSchema: z.object({
-      query: z.string().min(1).describe('Search keywords, e.g. "react testing", "web scraper", "seo".'),
-      limit: z.number().int().min(1).max(50).default(10).describe('Maximum results to return.'),
-      sortBy: z.enum(['stars', 'recent']).default('stars').describe('Sort results by stars or by most recently updated.'),
+      query: z
+        .string()
+        .min(1)
+        .describe(
+          'Search keywords, e.g. "react testing", "web scraper", "seo".',
+        ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Maximum results to return."),
+      sortBy: z
+        .enum(["stars", "recent"])
+        .default("stars")
+        .describe("Sort results by stars or by most recently updated."),
     }),
     execute: async ({ query, limit, sortBy }) => {
-      const { skills, total } = await searchSkills(query, { limit, sortBy }, ctx.abortSignal);
-      if (!skills.length) return `No skills found for '${query}'. Try different keywords.`;
-      return `Found ${total} skills for '${query}' (showing ${skills.length}):\n\n${skills.map((skill, index) => `${index + 1}. ${skill.name} ⭐${skill.stars} by ${skill.author}\n${skill.description}\nGitHub: ${skill.githubUrl || '(unknown)'}\nMarketplace: ${skill.skillUrl}`).join('\n\n')}`;
+      const { skills, total } = await searchSkills(
+        query,
+        { limit, sortBy },
+        ctx.abortSignal,
+      );
+      if (!skills.length)
+        return `No skills found for '${query}'. Try different keywords.`;
+      return `Found ${total} skills for '${query}' (showing ${skills.length}):\n\n${skills.map((skill, index) => `${index + 1}. ${skill.name} ⭐${skill.stars} by ${skill.author}\n${skill.description}\nGitHub: ${skill.githubUrl || "(unknown)"}\nMarketplace: ${skill.skillUrl}`).join("\n\n")}`;
     },
   });
   tools.skillsmp_list_repo_skills = tool({
     description: `List the installable skills (SKILL.md folders) available in a GitHub repository. Pass 'owner/repo' or a github.com URL. Use this to discover the exact skill folder name needed by skillsmp_install_skill when you only know the repository.`,
     inputSchema: z.object({
-      source: z.string().min(1).describe('GitHub repository, e.g. "davila7/claude-code-templates" or "https://github.com/davila7/claude-code-templates".'),
-      branch: z.string().default('main').describe('Git branch (falls back to main/master).'),
+      source: z
+        .string()
+        .min(1)
+        .describe(
+          'GitHub repository, e.g. "davila7/claude-code-templates" or "https://github.com/davila7/claude-code-templates".',
+        ),
+      branch: z
+        .string()
+        .default("main")
+        .describe("Git branch (falls back to main/master)."),
     }),
     execute: async ({ source, branch }) => {
-      const reference = resolveInstallPath(source, '', branch);
-      const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch, ctx.abortSignal);
-      if (!skills.length) return `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
+      const reference = resolveInstallPath(source, "", branch);
+      const skills = await listRepositorySkills(
+        reference.owner,
+        reference.repo,
+        reference.branch,
+        ctx.abortSignal,
+      );
+      if (!skills.length)
+        return `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
       const shown = skills.slice(0, 120);
-      return `${reference.owner}/${reference.repo} has ${skills.length} skills (showing the first ${shown.length}):\n\n${shown.map(skill => `- ${skill.name} (${skill.path})`).join('\n')}${skills.length > shown.length ? `\n… and ${skills.length - shown.length} more.` : ''}`;
+      return `${reference.owner}/${reference.repo} has ${skills.length} skills (showing the first ${shown.length}):\n\n${shown.map((skill) => `- ${skill.name} (${skill.path})`).join("\n")}${skills.length > shown.length ? `\n… and ${skills.length - shown.length} more.` : ""}`;
     },
   });
   tools.skillsmp_get_skill = tool({
     description: `Preview a skill's SKILL.md content from a GitHub repository before installing it. Pass the GitHub source from skillsmp_search results (which already points at the skill folder), or pass 'owner/repo' plus the skill's folder path from skillsmp_list_repo_skills. If only a repository is given, lists its skills instead.`,
     inputSchema: z.object({
-      source: z.string().min(1).describe('GitHub source: a github.com URL with skill path, or "owner/repo".'),
-      path: z.string().optional().describe('Skill folder path inside the repository (omit when source already includes it).'),
-      branch: z.string().default('main').describe('Git branch (falls back to main/master).'),
+      source: z
+        .string()
+        .min(1)
+        .describe(
+          'GitHub source: a github.com URL with skill path, or "owner/repo".',
+        ),
+      path: z
+        .string()
+        .optional()
+        .describe(
+          "Skill folder path inside the repository (omit when source already includes it).",
+        ),
+      branch: z
+        .string()
+        .default("main")
+        .describe("Git branch (falls back to main/master)."),
     }),
     execute: async ({ source, path: extraPath, branch }) => {
-      const reference = resolveInstallPath(source, '', branch);
-      const folderPath = extraPath ?? reference.folderPath ?? '';
+      const reference = resolveInstallPath(source, "", branch);
+      const folderPath = extraPath ?? reference.folderPath ?? "";
       if (!folderPath) {
-        const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch, ctx.abortSignal);
-        if (!skills.length) return `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
+        const skills = await listRepositorySkills(
+          reference.owner,
+          reference.repo,
+          reference.branch,
+          ctx.abortSignal,
+        );
+        if (!skills.length)
+          return `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
         const shown = skills.slice(0, 120);
-        return `No skill path given. Skills available in ${reference.owner}/${reference.repo} (${skills.length} total):\n\n${shown.map(skill => `- ${skill.name} (${skill.path})`).join('\n')}${skills.length > shown.length ? `\n… and ${skills.length - shown.length} more.` : ''}`;
+        return `No skill path given. Skills available in ${reference.owner}/${reference.repo} (${skills.length} total):\n\n${shown.map((skill) => `- ${skill.name} (${skill.path})`).join("\n")}${skills.length > shown.length ? `\n… and ${skills.length - shown.length} more.` : ""}`;
       }
-      const { content } = await readSkillMarkdown(reference.owner, reference.repo, reference.branch, folderPath, ctx.abortSignal);
+      const { content } = await readSkillMarkdown(
+        reference.owner,
+        reference.repo,
+        reference.branch,
+        folderPath,
+        ctx.abortSignal,
+      );
       return `# ${reference.owner}/${reference.repo} / ${folderPath}\n\n${truncate(content)}`;
     },
   });
   tools.skillsmp_install_skill = tool({
     description: `Install a skill from a GitHub repository into your global skills folder (Agent Skills format, available in every workspace). Requires user approval. Pass the GitHub source from skillsmp_search results, or 'owner/repo' plus the skill name discovered by skillsmp_list_repo_skills. The skill is then listed in the agent's instructions so it can be applied in this and future requests.`,
     inputSchema: z.object({
-      source: z.string().min(1).describe('GitHub source: a github.com URL that points at the skill folder, or "owner/repo".'),
-      skill: z.string().optional().describe('Skill folder name inside the repository when source is just "owner/repo".'),
-      branch: z.string().default('main').describe('Git branch (falls back to main/master).'),
+      source: z
+        .string()
+        .min(1)
+        .describe(
+          'GitHub source: a github.com URL that points at the skill folder, or "owner/repo".',
+        ),
+      skill: z
+        .string()
+        .optional()
+        .describe(
+          'Skill folder name inside the repository when source is just "owner/repo".',
+        ),
+      branch: z
+        .string()
+        .default("main")
+        .describe("Git branch (falls back to main/master)."),
     }),
     execute: async ({ source, skill, branch }) => {
-      const reference = resolveInstallPath(source, skill ?? '', branch);
+      const reference = resolveInstallPath(source, skill ?? "", branch);
       let folderPath = reference.folderPath;
       if (!folderPath) {
-        const skills = await listRepositorySkills(reference.owner, reference.repo, reference.branch, ctx.abortSignal);
+        const skills = await listRepositorySkills(
+          reference.owner,
+          reference.repo,
+          reference.branch,
+          ctx.abortSignal,
+        );
         const match = skill
-          ? skills.find(candidate => candidate.name === sanitizeSkillName(skill) || candidate.name.toLowerCase() === skill.trim().toLowerCase())
+          ? skills.find(
+              (candidate) =>
+                candidate.name === sanitizeSkillName(skill) ||
+                candidate.name.toLowerCase() === skill.trim().toLowerCase(),
+            )
           : undefined;
         if (!match) {
           const shown = skills.slice(0, 120);
           return skills.length
-            ? `${reference.owner}/${reference.repo} has ${skills.length} skills. Pick one and pass its name: ${shown.map(candidate => `${candidate.name} (${candidate.path})`).join(', ')}${skills.length > shown.length ? `, …(+${skills.length - shown.length} more)` : ''}`
+            ? `${reference.owner}/${reference.repo} has ${skills.length} skills. Pick one and pass its name: ${shown.map((candidate) => `${candidate.name} (${candidate.path})`).join(", ")}${skills.length > shown.length ? `, …(+${skills.length - shown.length} more)` : ""}`
             : `No SKILL.md skills found in ${reference.owner}/${reference.repo}.`;
         }
         folderPath = match.path;
       }
-      const installName = sanitizeSkillName(reference.hintedName ?? folderPath.split('/').pop() ?? skill ?? 'skill');
-      await ctx.approve('edit', `Install skill "${installName}"?`, `Source: ${reference.owner}/${reference.repo}${folderPath ? ` (${folderPath})` : ' (repository root)'}\n\nThe skill will be installed into your global skills folder as '${installName}' and is available in every workspace.`);
-      const result = await installSkillFromRepository(ctx.skillsDir, { owner: reference.owner, repo: reference.repo, branch: reference.branch, folderPath, installName }, ctx.abortSignal);
-      ctx.post({ type: 'changed', path: result.skillMdPath });
+      const installName = sanitizeSkillName(
+        reference.hintedName ?? folderPath.split("/").pop() ?? skill ?? "skill",
+      );
+      await ctx.approve(
+        "edit",
+        `Install skill "${installName}"?`,
+        `Source: ${reference.owner}/${reference.repo}${folderPath ? ` (${folderPath})` : " (repository root)"}\n\nThe skill will be installed into your global skills folder as '${installName}' and is available in every workspace.`,
+      );
+      const result = await installSkillFromRepository(
+        ctx.skillsDir,
+        {
+          owner: reference.owner,
+          repo: reference.repo,
+          branch: reference.branch,
+          folderPath,
+          installName,
+        },
+        ctx.abortSignal,
+      );
+      ctx.post({ type: "changed", path: result.skillMdPath });
       return `Installed skill '${result.name}' (${result.files} files, ${result.bytes} bytes) from ${reference.owner}/${reference.repo} into your global skills folder.\nRead ${result.skillMdPath} before applying the skill. It is offered to the agent automatically from the next request on.`;
     },
   });
@@ -315,21 +658,47 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
     inputSchema: z.object({}),
     execute: async () => {
       const installed = await listInstalledSkills(ctx.skillsDir);
-      if (!installed.length) return `No skills installed yet. Use skillsmp_search to find one and skillsmp_install_skill to add it.`;
-      return installed.map(skill => `- ${skill.name}: ${skill.description || '(no description)'} (${skill.folder})`).join('\n');
+      if (!installed.length)
+        return `No skills installed yet. Use skillsmp_search to find one and skillsmp_install_skill to add it.`;
+      return installed
+        .map(
+          (skill) =>
+            `- ${skill.name}: ${skill.description || "(no description)"} (${skill.folder})`,
+        )
+        .join("\n");
     },
   });
   const endpoint = ctx.config().searxngUrl;
   if (endpoint) {
     tools.web_search = tool({
-      description: 'Search the web through the user-configured SearXNG instance and return result titles, URLs, and snippets.',
-      inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(10).default(5) }),
+      description:
+        "Search the web through the user-configured SearXNG instance and return result titles, URLs, and snippets.",
+      inputSchema: z.object({
+        query: z.string().min(1),
+        limit: z.number().int().min(1).max(10).default(5),
+      }),
       execute: async ({ query, limit }) => {
-        const url = `${endpoint.replace(/\/$/, '')}/search?q=${encodeURIComponent(query)}&format=json`;
-        const response = await fetch(url, { signal: ctx.abortSignal, headers: { accept: 'application/json' } });
-        if (!response.ok) throw new Error(`SearXNG returned HTTP ${response.status}. Make sure JSON output is enabled.`);
-        const payload = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }> };
-        return (payload.results ?? []).slice(0, limit).map((result, index) => `${index + 1}. ${result.title ?? 'Untitled'}\n${result.url ?? ''}\n${result.content ?? ''}`).join('\n\n') || '(no results)';
+        const url = `${endpoint.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json`;
+        const response = await fetch(url, {
+          signal: ctx.abortSignal,
+          headers: { accept: "application/json" },
+        });
+        if (!response.ok)
+          throw new Error(
+            `SearXNG returned HTTP ${response.status}. Make sure JSON output is enabled.`,
+          );
+        const payload = (await response.json()) as {
+          results?: Array<{ title?: string; url?: string; content?: string }>;
+        };
+        return (
+          (payload.results ?? [])
+            .slice(0, limit)
+            .map(
+              (result, index) =>
+                `${index + 1}. ${result.title ?? "Untitled"}\n${result.url ?? ""}\n${result.content ?? ""}`,
+            )
+            .join("\n\n") || "(no results)"
+        );
       },
     });
   }

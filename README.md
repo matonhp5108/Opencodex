@@ -89,14 +89,14 @@ That is enough to begin. API keys, Ollama, SkillsMP, and SearXNG are optional.
 
 Every provider uses the same agent experience. Keys are stored separately for each provider in VS Code SecretStorage and are never written to `settings.json`.
 
-| Provider | API key | Models offered |
-| --- | --- | --- |
-| **OpenCode** *(default)* | No | Compatible models ending in `-free`, loaded from the live catalog |
-| **OpenRouter** | Yes | Compatible models ending in `:free`, loaded from the live catalog |
-| **Groq** | Yes | Compatible models in Groq's free tier |
-| **Google Gemini** | Yes | Compatible Gemini and Gemma free-tier models |
-| **Mistral** | Yes | Known free-tier models, with support for extra model IDs in Settings |
-| **Ollama** *(local)* | No | Compatible models installed on your machine |
+| Provider                 | API key | Models offered                                                       |
+| ------------------------ | ------- | -------------------------------------------------------------------- |
+| **OpenCode** _(default)_ | No      | Compatible models ending in `-free`, loaded from the live catalog    |
+| **OpenRouter**           | Yes     | Compatible models ending in `:free`, loaded from the live catalog    |
+| **Groq**                 | Yes     | Compatible models in Groq's free tier                                |
+| **Google Gemini**        | Yes     | Compatible Gemini and Gemma free-tier models                         |
+| **Mistral**              | Yes     | Known free-tier models, with support for extra model IDs in Settings |
+| **Ollama** _(local)_     | No      | Compatible models installed on your machine                          |
 
 Cloud free tiers have their own rate limits and availability can change without an Opencodex release. Reopen Settings to refresh the model list. Opencodex filters out non-chat and non-tool-capable models where provider metadata allows it.
 
@@ -104,30 +104,17 @@ Cloud free tiers have their own rate limits and availability can change without 
 
 Opencodex constrains its built-in file tools to the active workspace. Common credential files such as `.env` are blocked, and provider API keys are kept in VS Code's encrypted SecretStorage.
 
-| Mode | File edits | Commands | Destructive commands |
-| --- | --- | --- | --- |
-| **Ask** | Confirm | Confirm | Confirm |
-| **Auto edits** | Automatic | Safe commands automatic | Confirm |
-| **Open access** | Automatic | Automatic | Automatic |
+| Mode            | File edits | Commands                | Destructive commands |
+| --------------- | ---------- | ----------------------- | -------------------- |
+| **Ask**         | Confirm    | Confirm                 | Confirm              |
+| **Auto edits**  | Automatic  | Safe commands automatic | Confirm              |
+| **Open access** | Automatic  | Automatic               | Automatic            |
 
 In Ask mode, Opencodex opens a VS Code diff containing the proposed content before asking you to apply or reject it. Applied edits use VS Code workspace edits and participate in editor undo. Open access is intentionally powerful; use it only in workspaces where you are comfortable allowing unattended commands.
 
 ## MCP, subagents, terminals, and memory
 
-Configure MCP servers in Settings as a JSON object. Both local stdio servers and remote HTTP/SSE servers are supported:
-
-```json
-{
-  "local-tools": {
-    "command": "npx",
-    "args": ["-y", "some-mcp-server"]
-  },
-  "remote-tools": {
-    "url": "https://example.com/mcp",
-    "headers": { "Authorization": "Bearer ${env:MCP_TOKEN}" }
-  }
-}
-```
+Configure MCP servers in the Settings MCP picker, sort of like ChatGPT plugins. Opencodex can use multiple servers at once, and each server can expose multiple tools. The agent can call any tool from any server, and the tool's output is streamed back to the sidebar.
 
 Each MCP tool is namespaced by server and follows the active approval mode. Connections are opened for the agent run and closed afterward.
 
@@ -146,7 +133,7 @@ Opencodex can extend itself with `SKILL.md` packages from [SkillsMP](https://ski
 - **Install:** Add the selected skill to Opencodex's global extension storage after approval.
 - **Use anywhere:** Installed skills are available across workspaces and added to the agent's instructions from the next request.
 
-You can also ask directly: *“Find me a skill for web scraping”* or *“Install the planning skill from `owner/repository`.”*
+You can also ask directly: _“Find me a skill for web scraping”_ or _“Install the planning skill from `owner/repository`.”_
 
 ## Settings
 
@@ -154,16 +141,16 @@ Open the gear button in the Opencodex sidebar or run **Opencodex: Open Settings*
 
 ![Opencodex provider and agent settings](media/settings.png)
 
-| Setting | Purpose |
-| --- | --- |
-| `opencodex.provider` | Active model provider |
-| `opencodex.model` | Selected compatible free model |
-| `opencodex.maxSteps` | Maximum tool-loop steps; `0` allows unlimited steps |
-| `opencodex.approvalMode` | Ask, Auto edits, or Open access |
-| `opencodex.searxngUrl` | Optional SearXNG instance used by the web-search tool |
-| `opencodex.mcpServers` | JSON configuration for stdio, HTTP, or SSE MCP servers |
-| `opencodex.extraFreeModels` | Additional comma-separated model IDs to show |
-| `opencodex.systemNotifications` | Native task, approval, and failure notifications |
+| Setting                         | Purpose                                                |
+| ------------------------------- | ------------------------------------------------------ |
+| `opencodex.provider`            | Active model provider                                  |
+| `opencodex.model`               | Selected compatible free model                         |
+| `opencodex.maxSteps`            | Maximum tool-loop steps; `0` allows unlimited steps    |
+| `opencodex.approvalMode`        | Ask, Auto edits, or Open access                        |
+| `opencodex.searxngUrl`          | Optional SearXNG instance used by the web-search tool  |
+| `opencodex.mcpServers`          | JSON configuration for stdio, HTTP, or SSE MCP servers |
+| `opencodex.extraFreeModels`     | Additional comma-separated model IDs to show           |
+| `opencodex.systemNotifications` | Native task, approval, and failure notifications       |
 
 ### Optional web search
 
@@ -176,15 +163,15 @@ See the [SearXNG installation documentation](https://docs.searxng.org/admin/inst
 
 ## Commands
 
-| Command | Description |
-| --- | --- |
-| `Opencodex: Open Chat` | Open Opencodex in the secondary sidebar |
-| `Opencodex: Focus Chat` | Focus the current chat |
-| `Opencodex: Open Settings` | Open provider and agent settings |
-| `Opencodex: Show Token Usage` | Review recent input and output token usage |
-| `Opencodex: Open Project Memory` | Open the active folder's durable memory file |
-| `Opencodex: Skill Marketplace` | Browse, preview, and install skills |
-| `Opencodex: New Chat` | Start a new conversation |
+| Command                               | Description                                         |
+| ------------------------------------- | --------------------------------------------------- |
+| `Opencodex: Open Chat`                | Open Opencodex in the secondary sidebar             |
+| `Opencodex: Focus Chat`               | Focus the current chat                              |
+| `Opencodex: Open Settings`            | Open provider and agent settings                    |
+| `Opencodex: Show Token Usage`         | Review recent input and output token usage          |
+| `Opencodex: Open Project Memory`      | Open the active folder's durable memory file        |
+| `Opencodex: Skill Marketplace`        | Browse, preview, and install skills                 |
+| `Opencodex: New Chat`                 | Start a new conversation                            |
 | `Opencodex: Test System Notification` | Verify native notifications on the current platform |
 
 ## Requirements
@@ -221,7 +208,6 @@ The package command type-checks the project, builds the extension, and creates a
 - Skills search and installation use SkillsMP and GitHub; unauthenticated GitHub API limits may apply.
 - Restore points cover Git-tracked files and are available only for newer responses that captured a Git state.
 - Persistent terminal sessions use piped shells rather than a full PTY, so full-screen terminal applications are not supported.
-- MCP authentication is configured through server headers or environment variables; interactive OAuth is not yet included.
 
 ## Support and contributing
 
@@ -240,12 +226,12 @@ Pull requests are welcome. Please run `npm run check` and `npm run build` before
 </p>
 
 ```
-  ██████╗    ██████╗   ██╗  ██╗ 
- ██╔═══██╗  ██╔════╝   ╚██╗██╔╝ 
- ██║   ██║  ██║         ╚███╔╝  
- ██║   ██║  ██║         ██╔██╗  
- ╚██████╔╝  ╚██████╗   ██╔╝ ██╗ 
-  ╚═════╝    ╚═════╝   ╚═╝  ╚═╝ 
+  ██████╗    ██████╗   ██╗  ██╗
+ ██╔═══██╗  ██╔════╝   ╚██╗██╔╝
+ ██║   ██║  ██║         ╚███╔╝
+ ██║   ██║  ██║         ██╔██╗
+ ╚██████╔╝  ╚██████╗   ██╔╝ ██╗
+  ╚═════╝    ╚═════╝   ╚═╝  ╚═╝
 ```
 
 <p align="center">

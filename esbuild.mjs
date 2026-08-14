@@ -1,14 +1,14 @@
-import * as esbuild from 'esbuild';
+import * as esbuild from "esbuild";
 
-const watch = process.argv.includes('--watch');
+const watch = process.argv.includes("--watch");
 const options = {
-  entryPoints: ['src/extension.ts'],
+  entryPoints: ["src/extension.ts"],
   bundle: true,
-  outfile: 'dist/extension.js',
-  external: ['vscode'],
-  format: 'cjs',
-  platform: 'node',
-  target: 'node20',
+  outfile: "dist/extension.js",
+  external: ["vscode"],
+  format: "cjs",
+  platform: "node",
+  target: "node20",
   sourcemap: true,
   minify: !watch,
 };
@@ -16,7 +16,7 @@ const options = {
 if (watch) {
   const context = await esbuild.context(options);
   await context.watch();
-  console.log('Watching Opencodex…');
+  console.log("Watching Opencodex…");
 } else {
   await esbuild.build(options);
 }

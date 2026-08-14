@@ -2,7 +2,7 @@
   "name": "opencodex-agent",
   "displayName": "Opencodex",
   "description": "A free, open-source coding agent inside VS Code.",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -41,6 +41,7 @@
   ],
   "activationEvents": [
     "onView:opencodex.chat",
+    "onUri",
     "onCommand:opencodex.openChat",
     "onCommand:opencodex.testSystemNotification",
     "onCommand:opencodex.testStarPrompt"
