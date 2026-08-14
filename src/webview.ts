@@ -102,7 +102,10 @@ export function getWebviewHtml(
   <div class="settings-top"><button class="icon" id="settingsBack" title="Back to chat"><svg viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg></button><span class="usage-title" id="settingsTitle">Opencodex Settings</span></div>
   <div class="settings-body">
     <p class="setup-copy">Choose how Opencodex should work before starting your first conversation. Pick a provider and a free model. OpenCode works anonymously, while cloud providers use a free API key you can paste here.</p>
-    <div class="field"><label for="provider">Default Provider</label><select class="model-select" id="provider" style="width:100%;max-width:none"></select></div>
+    <div class="field">
+      <div class="mcp-section-head"><label for="provider">Default Provider</label><button class="mcp-add" id="customProviderAdd" title="Add custom OpenAI-compatible provider"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button></div>
+      <select class="model-select" id="provider" style="width:100%;max-width:none"></select>
+    </div>
     <div class="field"><label class="checkbox-label" for="onlyDefaultModels" style="margin:0"><input type="checkbox" id="onlyDefaultModels"><span class="checkbox-box" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Only show the default provider's models</label></div>
     <div class="field" id="apiKeyField"><label for="apiKey">API key</label><input id="apiKey" type="password" spellcheck="false" autocomplete="off" placeholder="Paste API key…"><p class="field-hint" id="apiKeyHint"></p><div id="clearApiKeyRow" style="display:none;align-items:center;gap:9px;margin:8px 0 0"><span id="savedKeyLabel" style="font-size:11px;color:var(--vscode-descriptionForeground)"></span><button type="button" class="small-btn" id="clearApiKey">Remove saved key</button></div></div>
     <div class="field" id="baseUrlField" style="display:none"><label for="baseUrl">Server URL</label><input id="baseUrl" spellcheck="false" placeholder="http://localhost:11434/v1"></div>
@@ -119,6 +122,13 @@ export function getWebviewHtml(
   </div>
   <div class="settings-actions"><button class="secondary" id="resetSettings">Reset to defaults</button></div>
 </div>
+<div class="modal-backdrop" id="customProviderBackdrop"><div class="modal" id="customProviderModal" role="dialog" aria-modal="true" aria-labelledby="customProviderTitle"><div class="modal-head"><span class="modal-title" id="customProviderTitle">Add custom provider</span><button class="icon" id="customProviderClose" aria-label="Close">×</button></div><div class="modal-body">
+  <div class="field"><label for="customProviderName">Name</label><input id="customProviderName" type="text" placeholder="My local server"></div>
+  <div class="field"><label for="customProviderBaseUrl">Base URL</label><input id="customProviderBaseUrl" type="text" spellcheck="false" placeholder="https://api.example.com/v1"><p class="field-hint">Must be OpenAI-compatible.</p></div>
+  <div class="field"><label class="checkbox-label" for="customProviderNeedsKey" style="margin:0"><input type="checkbox" id="customProviderNeedsKey"><span class="checkbox-box" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Requires an API key</label></div>
+  <div class="field" id="customProviderApiKeyField" style="display:none"><label for="customProviderApiKey">API key <span style="opacity:.7">(optional)</span></label><input id="customProviderApiKey" type="password" spellcheck="false" autocomplete="off" placeholder="Paste API key…"><p class="field-hint" id="customProviderKeyHint"></p></div>
+  <p class="field-hint" id="customProviderResult"></p>
+</div><div class="modal-actions"><button class="secondary" id="customProviderDelete" style="display:none">Delete</button><span class="spacer"></span><button class="secondary" id="customProviderCancel">Cancel</button><button class="primary" id="customProviderSave">Save</button></div></div></div>
 <div class="modal-backdrop" id="mcpToolsBackdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mcpToolsTitle"><div class="modal-head"><span class="modal-title" id="mcpToolsTitle">Exposed tools</span><button class="icon" id="mcpToolsClose" aria-label="Close">×</button></div><div class="modal-body"><div class="mcp-tools-list" id="mcpToolsList"></div></div></div></div>
 <div class="modal-backdrop" id="notifyBackdrop"><div class="modal notify-modal" id="notifyModal" role="dialog" aria-modal="true" aria-labelledby="notifyTitle"><div class="modal-head"><span class="notify-title-icon" id="notifyIcon"><svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span><span class="modal-title" id="notifyTitle"></span><button class="icon" id="notifyClose" aria-label="Close">×</button></div><div class="modal-body"><p class="notify-body" id="notifyBody"></p></div><div class="modal-actions notify-actions"><button class="secondary" id="notifySecondary" style="display:none"></button><span class="spacer"></span><button class="secondary" id="notifyCancel"></button><button class="primary" id="notifyOk"></button></div></div></div>
 <script nonce="${nonce}">
@@ -269,7 +279,7 @@ export function getWebviewHtml(
   function autosaveNow(){resetArmGuard();clearTimeout(autosaveTimer);vscode.postMessage({type:'saveSettings',...settingsPayload()})}
   function autosaveLater(){resetArmGuard();clearTimeout(autosaveTimer);autosaveTimer=setTimeout(()=>vscode.postMessage({type:'saveSettings',...settingsPayload()}),350)}
   function renderProviderOptions(){provider.innerHTML=(providersList||[]).map(p=>'<option value="'+esc(p.id)+'" data-accepts="'+p.acceptsApiKey+'" data-required="'+p.needsApiKey+'" data-name="'+esc(p.name)+'" data-url="'+esc(p.apiKeyUrl||'')+'" data-local="'+p.isLocal+'" data-baseurl="'+esc(p.baseUrl||'')+'">'+esc(p.name)+(providerConfigured[p.id]?' - Configured':'')+'</option>').join('')}
-  function updateProviderFields(){const opt=provider.options[provider.selectedIndex];const accepts=opt?.dataset.accepts==='true';const has=Boolean(savedApiKeys[opt?.value]);apiKeyField.style.display=accepts?'':'none';baseUrlField.style.display=opt?.dataset.local==='true'?'':'none';if(opt?.dataset.local==='true')baseUrlInput.value=opt?.dataset.baseurl||'';if(!accepts){apiKeyHint.textContent='No API key required.';return}savedKeyLabel.textContent=has?'Key saved':'No key saved';clearApiKeyRow.style.display=has?'flex':'none';const keyUrl=opt?.dataset.url||'';const hint=apiKeyHint;if(providerConfigured[opt?.value]&&has){hint.textContent=''}else if(keyUrl){const label=esc(opt?.dataset.name||'this provider');const link='<a href="'+esc(keyUrl)+'" target="_blank" rel="noopener">'+label+'</a>';hint.innerHTML=opt?.dataset.required==='true'?'Get a free API key from '+link+'.':'(Optional - Get API Key from '+link+')'}else{hint.textContent='No API key required.'}}
+  function updateProviderFields(){const opt=provider.options[provider.selectedIndex];const accepts=opt?.dataset.accepts==='true';const has=Boolean(savedApiKeys[opt?.value]);apiKeyField.style.display=accepts?'':'none';baseUrlField.style.display=opt?.dataset.local==='true'?'':'none';if(opt?.dataset.local==='true')baseUrlInput.value=opt?.dataset.baseurl||'';if(!accepts){apiKeyHint.textContent='';return}savedKeyLabel.textContent=has?'Key saved':'No key saved';clearApiKeyRow.style.display=has?'flex':'none';const keyUrl=opt?.dataset.url||'';const hint=apiKeyHint;if(providerConfigured[opt?.value]&&has){hint.textContent=''}else if(keyUrl){const label=esc(opt?.dataset.name||'this provider');const link='<a href="'+esc(keyUrl)+'" target="_blank" rel="noopener">'+label+'</a>';hint.innerHTML=opt?.dataset.required==='true'?'Get a free API key from '+link+'.':'(Optional - Get API Key from '+link+')'}else{hint.textContent=''}}
   function openSettings(m){initialSetup=Boolean(m.initialSetup);savedApiKeys=m.apiKeys||{};providersList=m.providers||[];providerConfigured=m.configured||{};settingsView.classList.toggle('onboarding',initialSetup);document.getElementById('settingsTitle').textContent=initialSetup?'Set up Opencodex':'Opencodex Settings';renderProviderOptions();provider.value=m.provider||'opencode';maxSteps.value=m.maxSteps||20;maxStepsUnlimited.checked=m.maxSteps===0;maxSteps.disabled=maxStepsUnlimited.checked;onlyDefaultModels.checked=Boolean(m.onlyDefaultModels);confirmDelete.checked=m.confirmDelete!==false;approvalMode.value=m.approvalMode||'ask';searxngUrl.value=m.searxngUrl||'';systemPrompt.value=m.systemPrompt||'';extraFreeModels.value=(m.extraFreeModels||'');apiKeyInput.value='';updateProviderFields();settingsResult.textContent='';settingsResult.className='settings-result';document.querySelector('.app').style.display='none';settingsView.classList.add('visible');resetArmGuard();clearTimeout(autosaveTimer);clearTimeout(settingsSavedTimer);vscode.postMessage({type:'fetchMcpConnections'});setTimeout(()=>maxSteps.focus(),0)}
   function closeSettings(){settingsView.classList.remove('visible');document.querySelector('.app').style.display='flex'}
   modelButton.onclick=toggleModelMenu;document.addEventListener('click',e=>{if(!modelDropdown.contains(e.target))closeModelMenu()});document.getElementById('usageButton').onclick=openUsageView;document.getElementById('usageBack').onclick=closeUsageView;document.getElementById('usageRefresh').onclick=()=>vscode.postMessage({type:'requestUsage'});document.getElementById('marketplaceButton').onclick=()=>{openMarketplaceView();vscode.postMessage({type:'requestMarketplaceInstalled'})};document.getElementById('marketplaceBack').onclick=closeMarketplaceView;document.getElementById('marketplaceRefresh').onclick=()=>{if(marketplaceTab==='installed'){vscode.postMessage({type:'requestMarketplaceInstalled'})}else if(marketplaceQuery.value.trim()){marketplaceSearch()}else if(!marketplaceBusy){loadMarketplaceTop(true,marketplaceSort.value)}};document.getElementById('marketplaceSearchBtn').onclick=marketplaceSearch;marketplaceQuery.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();marketplaceSearch()}};marketplaceQuery.oninput=()=>runMarketplaceSearch(true);marketplaceSort.onchange=()=>runMarketplaceSearch(false);document.getElementById('marketplaceRepoBtn').onclick=marketplaceListRepo;marketplaceRepo.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();marketplaceListRepo()}};document.getElementById('previewClose').onclick=closeSkillPreview;previewModal.onclick=e=>{if(e.target===previewModal)closeSkillPreview()};previewInstall.onclick=()=>{if(!previewState)return;const path=previewState.path;startSkillInstall(previewState.origin===null||previewState.origin===undefined?-1:previewState.origin,{install:{source:previewState.source,skill:path?path.split('/').pop():undefined}})};document.getElementById('settingsButton').onclick=()=>vscode.postMessage({type:'requestSettings'});document.getElementById('settingsBack').onclick=closeSettings;document.getElementById('newConversation').onclick=()=>vscode.postMessage({type:'newConversation'});document.getElementById('conversationButton').onclick=()=>conversationMenu.classList.toggle('open');
@@ -430,6 +440,65 @@ export function getWebviewHtml(
           return;
         } return } const row = e.target.closest('.mcp-row'); if(row){ const name = row.dataset.name; const conn = mcpConns.find(c=>c.name===name); if(conn){ openAddMcp(conn); if(addMcpBackdrop) addMcpBackdrop.scrollTop=0 } } }) }
     window.addEventListener('message', ({data:m})=>{ if(!m) return; if(m.type==='mcpConnections'){ renderList(m.connections||[]); checkConns() } else if(m.type==='mcpConnectionStatuses'){ mcpStatuses = {}; (m.statuses||[]).forEach(s=>{ mcpStatuses[s.name] = s }); renderList(mcpConns) } else if(m.type==='mcpConnectionSaved'||m.type==='mcpConnectionDeleted'){ fetchConns() } });
+  })();
+
+  (function(){
+    const backdrop=document.getElementById('customProviderBackdrop');
+    const titleEl=document.getElementById('customProviderTitle');
+    const nameInput=document.getElementById('customProviderName');
+    const baseUrlInput=document.getElementById('customProviderBaseUrl');
+    const needsKeyInput=document.getElementById('customProviderNeedsKey');
+    const apiKeyInput=document.getElementById('customProviderApiKey');
+    const apiKeyField=document.getElementById('customProviderApiKeyField');
+    const keyHint=document.getElementById('customProviderKeyHint');
+    const resultEl=document.getElementById('customProviderResult');
+    const saveBtn=document.getElementById('customProviderSave');
+    const deleteBtn=document.getElementById('customProviderDelete');
+    const closeBtn=document.getElementById('customProviderClose');
+    const cancelBtn=document.getElementById('customProviderCancel');
+    const addBtn=document.getElementById('customProviderAdd');
+    if(!backdrop) return;
+    let editingId='';
+    function syncApiKeyVisibility(){ if(apiKeyField) apiKeyField.style.display=needsKeyInput.checked?'':'none'; }
+    function openModal(p){
+      editingId=p?p.id:'';
+      titleEl.textContent=p?'Edit custom provider':'Add custom provider';
+      nameInput.value=p?p.name:'';
+      baseUrlInput.value=p?p.baseUrl:'';
+      needsKeyInput.checked=Boolean(p&&p.needsApiKey);
+      apiKeyInput.value='';
+      keyHint.textContent=p&&p.hasApiKey?'A key is already saved for this provider. Leave blank to keep it.':'';
+      resultEl.textContent='';
+      deleteBtn.style.display=p?'':'none';
+      syncApiKeyVisibility();
+      backdrop.classList.add('open');
+      backdrop.style.display='flex';
+      setTimeout(()=>nameInput.focus(),50);
+    }
+    function closeModal(){backdrop.classList.remove('open');backdrop.style.display=''}
+    if(addBtn) addBtn.onclick=()=>openModal(null);
+    if(closeBtn) closeBtn.onclick=closeModal;
+    if(cancelBtn) cancelBtn.onclick=closeModal;
+    if(needsKeyInput) needsKeyInput.onchange=syncApiKeyVisibility;
+    backdrop.onclick=e=>{if(e.target===backdrop)closeModal()};
+    if(saveBtn) saveBtn.onclick=()=>{
+      const name=nameInput.value.trim();
+      const baseUrl=baseUrlInput.value.trim();
+      if(!name){resultEl.textContent='Name is required.';nameInput.focus();return}
+      if(!baseUrl||!/^https?:\/\//i.test(baseUrl)){resultEl.textContent='Base URL must start with http:// or https://.';baseUrlInput.focus();return}
+      resultEl.textContent='';
+      vscode.postMessage({type:'saveCustomProvider',id:editingId||undefined,name,baseUrl,needsApiKey:needsKeyInput.checked,apiKey:apiKeyInput.value.trim()||undefined});
+    };
+    if(deleteBtn) deleteBtn.onclick=()=>{
+      if(!editingId) return;
+      showNotifyModal({title:'Delete custom provider?',body:'Remove "'+nameInput.value.trim()+'"? Its saved API key will also be removed.',ok:'Delete',cancel:'Cancel',danger:true}).then(choice=>{if(choice==='ok')vscode.postMessage({type:'deleteCustomProvider',id:editingId})});
+    };
+    window.addEventListener('message',({data:m})=>{
+      if(!m) return;
+      if(m.type==='customProviderSaved'){closeModal()}
+      else if(m.type==='customProviderDeleted'){closeModal()}
+      else if(m.type==='customProviderError'){resultEl.textContent=m.text||'Failed to save provider.'}
+    });
   })();
 
   vscode.postMessage({type:'ready'})

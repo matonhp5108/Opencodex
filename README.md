@@ -98,6 +98,8 @@ Every provider uses the same agent experience. Keys are stored separately for ea
 | **Mistral**              | Yes     | Known free-tier models, with support for extra model IDs in Settings |
 | **Ollama** _(local)_     | No      | Compatible models installed on your machine                          |
 
+> As of 0.2.8, Opencodex supports adding custom OpenAI-compatible providers. Don't see your provider on the list? Just add it in settings!
+
 Cloud free tiers have their own rate limits and availability can change without an Opencodex release. Reopen Settings to refresh the model list. Opencodex filters out non-chat and non-tool-capable models where provider metadata allows it.
 
 ## Safety and approvals

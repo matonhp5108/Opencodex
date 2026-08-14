@@ -2,7 +2,7 @@
   "name": "opencodex-agent",
   "displayName": "Opencodex",
   "description": "A free, open-source coding agent inside VS Code.",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -125,16 +125,8 @@
         },
         "opencodex.provider": {
           "type": "string",
-          "enum": [
-            "opencode",
-            "openrouter",
-            "groq",
-            "gemini",
-            "mistral",
-            "ollama"
-          ],
           "default": "opencode",
-          "description": "Free model provider to use. OpenCode works anonymously; the other providers need an API key saved in Settings (or a matching environment variable)."
+          "description": "Model provider to use. OpenCode works anonymously; the other built-in providers need an API key saved in Settings (or a matching environment variable). Can also be the id of a custom OpenAI-compatible provider added in Settings."
         },
         "opencodex.maxSteps": {
           "type": "number",

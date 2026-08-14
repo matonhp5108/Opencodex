@@ -6,9 +6,12 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { ToolLoopAgent, isLoopFinished, isStepCount } from "ai";
 import { captureGitTree, isGitTrackedWorkspace, restoreGitTree } from "./git";
 import {
+  customProviderConfigToProvider,
   fetchProviderModels,
   getProvider,
   listProviders,
+  makeCustomProviderId,
+  type CustomProviderConfig,
   type Provider,
 } from "./providers";
 import {
@@ -150,6 +153,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     promptContext?: string;
   }[] = [];
   private apiKeys: Record<string, string> = {};
+  private customProviders: Provider[] = [];
   private persistChain: Promise<void> = Promise.resolve();
   private notifySeq = 0;
   private pendingNotifies = new Map<
@@ -159,6 +163,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   private readonly terminals = new TerminalManager();
 
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.loadCustomProviders();
     context.subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() =>
         this.onWorkspaceFoldersChanged(),
@@ -232,7 +237,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
   private async loadApiKeysOnce(): Promise<void> {
     const keys: Record<string, string> = {};
-    for (const provider of listProviders()) {
+    for (const provider of listProviders(this.customProviders)) {
       try {
         keys[provider.id] =
           (await this.context.secrets.get(`opencodex.apiKey.${provider.id}`)) ??
@@ -247,6 +252,100 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       await this.context.secrets.delete("opencodex.apiKey.opencode");
       this.apiKeys.opencode = "";
     } catch {}
+  }
+
+  private loadCustomProviders(): void {
+    const stored = this.context.globalState.get<CustomProviderConfig[]>(
+      "opencodex.customProviders",
+      [],
+    );
+    this.customProviders = (Array.isArray(stored) ? stored : [])
+      .filter(
+        (entry): entry is CustomProviderConfig =>
+          Boolean(entry) &&
+          typeof entry.id === "string" &&
+          typeof entry.name === "string" &&
+          typeof entry.baseUrl === "string",
+      )
+      .map((entry) => customProviderConfigToProvider(entry));
+  }
+
+  private async writeCustomProviders(
+    list: CustomProviderConfig[],
+  ): Promise<void> {
+    await this.context.globalState.update("opencodex.customProviders", list);
+    this.loadCustomProviders();
+  }
+
+  private customProviderConfigs(): CustomProviderConfig[] {
+    return this.customProviders.map((provider) => ({
+      id: provider.id,
+      name: provider.name,
+      baseUrl: provider.baseURL,
+      needsApiKey: provider.needsApiKey,
+    }));
+  }
+
+  private async saveCustomProvider(input: {
+    id?: string;
+    name: string;
+    baseUrl: string;
+    needsApiKey: boolean;
+    apiKey?: string;
+  }): Promise<string> {
+    const name = input.name.trim();
+    if (!name) throw new Error("Provider name is required.");
+    const baseUrl = input.baseUrl.trim().replace(/\/$/, "");
+    if (!/^https?:\/\//i.test(baseUrl))
+      throw new Error("Base URL must start with http:// or https://.");
+    const existing = this.customProviderConfigs();
+    const editingId =
+      input.id && existing.some((entry) => entry.id === input.id)
+        ? input.id
+        : undefined;
+    const id =
+      editingId ??
+      makeCustomProviderId(
+        name,
+        existing.map((entry) => entry.id),
+      );
+    const record: CustomProviderConfig = {
+      id,
+      name,
+      baseUrl,
+      needsApiKey: Boolean(input.needsApiKey),
+    };
+    const list = existing.filter((entry) => entry.id !== id);
+    list.push(record);
+    await this.writeCustomProviders(list);
+    if (input.apiKey?.trim()) {
+      await this.context.secrets.store(
+        `opencodex.apiKey.${id}`,
+        input.apiKey.trim(),
+      );
+      this.apiKeys[id] = input.apiKey.trim();
+    }
+    if (!editingId) {
+      await vscode.workspace
+        .getConfiguration("opencodex")
+        .update("provider", id, vscode.ConfigurationTarget.Global);
+    }
+    return id;
+  }
+
+  private async deleteCustomProvider(id: string): Promise<void> {
+    const list = this.customProviderConfigs().filter((entry) => entry.id !== id);
+    await this.writeCustomProviders(list);
+    try {
+      await this.context.secrets.delete(`opencodex.apiKey.${id}`);
+    } catch {}
+    delete this.apiKeys[id];
+    await this.context.globalState.update(`opencodex.baseUrl.${id}`, undefined);
+    if (this.config().provider === id) {
+      await vscode.workspace
+        .getConfiguration("opencodex")
+        .update("provider", "opencode", vscode.ConfigurationTarget.Global);
+    }
   }
 
   async openSettings(): Promise<void> {
@@ -420,7 +519,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       mcpServers: config.mcpServers,
       extraFreeModels: config.extraFreeModels.join(", "),
       provider: config.provider,
-      providers: listProviders().map((provider) => ({
+      providers: listProviders(this.customProviders).map((provider) => ({
         id: provider.id,
         name: provider.name,
         needsApiKey: provider.needsApiKey,
@@ -428,10 +527,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         apiKeyEnvVar: provider.apiKeyEnvVar,
         apiKeyUrl: provider.apiKeyUrl,
         isLocal: Boolean(provider.isLocal),
+        isCustom: Boolean(provider.isCustom),
         baseUrl: this.providerBaseUrl(provider),
       })),
       apiKeys: Object.fromEntries(
-        listProviders().map((provider) => [
+        listProviders(this.customProviders).map((provider) => [
           provider.id,
           Boolean(
             this.apiKeys[provider.id] ||
@@ -440,11 +540,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         ]),
       ),
       configured: Object.fromEntries(
-        listProviders().map((provider) => [
+        listProviders(this.customProviders).map((provider) => [
           provider.id,
           this.providerConfigured(provider),
         ]),
       ),
+      customProviders: this.customProviderConfigs().map((entry) => ({
+        ...entry,
+        hasApiKey: Boolean(this.apiKeys[entry.id]),
+      })),
       onlyDefaultModels: this.config().onlyDefaultModels,
       confirmDelete: this.confirmDeleteConversations(),
       initialSetup,
@@ -1309,7 +1413,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           rawMaxSteps === 0
             ? 0
             : Math.max(1, Math.min(50, Math.round(rawMaxSteps) || 20));
-        const providerId = listProviders().some(
+        const providerId = listProviders(this.customProviders).some(
           (provider) => provider.id === message.provider,
         )
           ? message.provider
@@ -1351,7 +1455,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           message.confirmDelete !== false,
         );
         await this.context.globalState.update("opencodex.setupComplete", true);
-        const provider = getProvider(providerId);
+        const provider = getProvider(providerId, this.customProviders);
         if (provider.isLocal) {
           const baseUrl = (message.baseUrl ?? "").trim().replace(/\/$/, "");
           if (baseUrl && !/^https?:\/\//i.test(baseUrl))
@@ -1386,8 +1490,32 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       }
       return;
     }
+    if (message.type === "saveCustomProvider") {
+      try {
+        const id = await this.saveCustomProvider({
+          id: message.id,
+          name: message.name,
+          baseUrl: message.baseUrl,
+          needsApiKey: message.needsApiKey,
+          apiKey: message.apiKey,
+        });
+        this.post({ type: "customProviderSaved", id });
+        await this.showSettings();
+        await this.refreshModels();
+      } catch (error) {
+        this.post({ type: "customProviderError", text: errorMessage(error) });
+      }
+      return;
+    }
+    if (message.type === "deleteCustomProvider") {
+      await this.deleteCustomProvider(message.id);
+      this.post({ type: "customProviderDeleted", id: message.id });
+      await this.showSettings();
+      await this.refreshModels();
+      return;
+    }
     if (message.type === "removeApiKey") {
-      const providerId = listProviders().some(
+      const providerId = listProviders(this.customProviders).some(
         (provider) => provider.id === message.provider,
       )
         ? message.provider
@@ -1396,7 +1524,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         await this.context.secrets.delete(`opencodex.apiKey.${providerId}`);
       } catch {}
       delete this.apiKeys[providerId];
-      const provider = getProvider(providerId);
+      const provider = getProvider(providerId, this.customProviders);
       this.post({
         type: "apiKeyState",
         provider: providerId,
@@ -1436,13 +1564,18 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         "opencodex.confirmDelete",
         undefined,
       );
-      for (const provider of listProviders()) {
+      for (const provider of listProviders(this.customProviders)) {
         await this.context.secrets.delete(`opencodex.apiKey.${provider.id}`);
         await this.context.globalState.update(
           `opencodex.baseUrl.${provider.id}`,
           undefined,
         );
       }
+      await this.context.globalState.update(
+        "opencodex.customProviders",
+        undefined,
+      );
+      this.loadCustomProviders();
       this.apiKeys = {};
       await this.context.secrets.delete("opencodex.apiKey");
       await this.showSettings();
@@ -1457,7 +1590,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       );
       if (
         message.provider &&
-        listProviders().some((provider) => provider.id === message.provider)
+        listProviders(this.customProviders).some(
+          (provider) => provider.id === message.provider,
+        )
       ) {
         await config.update(
           "provider",
@@ -1806,7 +1941,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         postPlan();
       }
     }
-    const providerConfig = getProvider(this.config().provider);
+    const providerConfig = getProvider(
+      this.config().provider,
+      this.customProviders,
+    );
     try {
       if (gitTracked) runGitTree ??= await captureGitTree(root.fsPath);
       const { model, maxSteps, apiKey, baseUrl } = this.config();
@@ -2519,7 +2657,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
   private config(): AppConfig {
     const config = vscode.workspace.getConfiguration("opencodex");
-    const provider = getProvider(config.get<string>("provider", "opencode"));
+    const provider = getProvider(
+      config.get<string>("provider", "opencode"),
+      this.customProviders,
+    );
     return {
       model: config.get<string>("model", ""),
       provider: provider.id,
@@ -2588,10 +2729,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
   private async refreshModels(): Promise<void> {
     const config = this.config();
-    const defaultProvider = getProvider(config.provider);
+    const defaultProvider = getProvider(config.provider, this.customProviders);
     const targets = config.onlyDefaultModels
       ? [defaultProvider]
-      : listProviders().filter((provider) => this.providerConfigured(provider));
+      : listProviders(this.customProviders).filter((provider) =>
+          this.providerConfigured(provider),
+        );
     const groups: ProviderModelGroup[] = [];
     await Promise.all(
       targets.map(async (provider) => {

@@ -33,6 +33,15 @@ export type WebMessage =
       initialSetup?: boolean;
     }
   | { type: "removeApiKey"; provider: string }
+  | {
+      type: "saveCustomProvider";
+      id?: string;
+      name: string;
+      baseUrl: string;
+      needsApiKey: boolean;
+      apiKey?: string;
+    }
+  | { type: "deleteCustomProvider"; id: string }
   | { type: "resetSettings" }
   | { type: "openFile"; path: string }
   | { type: "chooseContext" }

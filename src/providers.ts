@@ -11,6 +11,49 @@ export interface Provider {
   freeModels?: string[];
   parseModels?: (body: unknown) => string[];
   isLocal?: boolean;
+  isCustom?: boolean;
+}
+
+export type CustomProviderConfig = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  needsApiKey: boolean;
+};
+
+const CUSTOM_ID_PREFIX = "custom-";
+
+export function isCustomProviderId(id: string | undefined): boolean {
+  return Boolean(id && id.startsWith(CUSTOM_ID_PREFIX));
+}
+
+export function makeCustomProviderId(
+  name: string,
+  existingIds: Iterable<string>,
+): string {
+  const slug =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-+|-+$)/g, "") || "provider";
+  const taken = new Set(existingIds);
+  let id = `${CUSTOM_ID_PREFIX}${slug}`;
+  let suffix = 2;
+  while (taken.has(id)) id = `${CUSTOM_ID_PREFIX}${slug}-${suffix++}`;
+  return id;
+}
+
+export function customProviderConfigToProvider(
+  config: CustomProviderConfig,
+): Provider {
+  return {
+    id: config.id,
+    name: config.name,
+    baseURL: config.baseUrl,
+    needsApiKey: config.needsApiKey,
+    acceptsApiKey: true,
+    isCustom: true,
+  };
 }
 
 const NON_TEXT =
@@ -191,12 +234,21 @@ export const PROVIDERS: Record<string, Provider> = {
   },
 };
 
-export function getProvider(id: string | undefined): Provider {
-  return (id && PROVIDERS[id]) || PROVIDERS.opencode!;
+export function getProvider(
+  id: string | undefined,
+  customProviders: Provider[] = [],
+): Provider {
+  if (id) {
+    const builtin = PROVIDERS[id];
+    if (builtin) return builtin;
+    const custom = customProviders.find((provider) => provider.id === id);
+    if (custom) return custom;
+  }
+  return PROVIDERS.opencode!;
 }
 
-export function listProviders(): Provider[] {
-  return Object.values(PROVIDERS);
+export function listProviders(customProviders: Provider[] = []): Provider[] {
+  return [...Object.values(PROVIDERS), ...customProviders];
 }
 
 export async function fetchProviderModels(
@@ -262,7 +314,7 @@ export async function fetchProviderModels(
   }
   if (!models.length && provider.freeModels?.length)
     models = provider.freeModels;
-  if (!models.length && provider.isLocal)
+  if (!models.length && (provider.isLocal || provider.isCustom))
     models = entries.map((entry) => entry.id);
   const capabilities =
     provider.id === "ollama" && provider.isLocal
@@ -277,3 +329,4 @@ export async function fetchProviderModels(
     throw new Error(`${provider.name} currently lists no compatible models.`);
   return models;
 }
+ 
