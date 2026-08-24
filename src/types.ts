@@ -229,6 +229,7 @@ export interface AppConfig {
   searxngUrl: string;
   systemPrompt: string;
   mcpServers: string;
+  parallelSearch: boolean;
   extraFreeModels: string[];
   onlyDefaultModels: boolean;
 }

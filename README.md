@@ -120,6 +120,10 @@ Configure MCP servers in the Settings MCP picker, sort of like ChatGPT plugins. 
 
 Each MCP tool is namespaced by server and follows the active approval mode. Connections are opened for the agent run and closed afterward.
 
+### Optional Parallel Search
+
+Enable `opencodex.parallelSearch` to add the free [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) server; it is off by default and requires no API key. When enabled, search objectives and queries are sent to Parallel. A requested URL is sent only when the selected MCP tool fetches that URL. The integration adds no telemetry or custom attribution. If you already configured an MCP server named `parallelSearch`, Opencodex keeps your server unchanged.
+
 The agent can delegate a bounded task to an **explorer**, **reviewer**, or **worker** subagent. Explorer and reviewer subagents are read-only; worker subagents can edit and verify through the same approval system as the parent.
 
 Named persistent shell sessions remain alive across tool calls and conversations until they are explicitly stopped or the extension closes. Project memory is stored in `.opencodex/memory.md`, loaded into future requests, and editable with **Opencodex: Open Project Memory** from the Command Palette.
@@ -151,6 +155,7 @@ Open the gear button in the Opencodex sidebar or run **Opencodex: Open Settings*
 | `opencodex.approvalMode`        | Ask, Auto edits, or Open access                        |
 | `opencodex.searxngUrl`          | Optional SearXNG instance used by the web-search tool  |
 | `opencodex.mcpServers`          | JSON configuration for stdio, HTTP, or SSE MCP servers |
+| `opencodex.parallelSearch`       | Opt in to the free Parallel Search MCP server           |
 | `opencodex.extraFreeModels`     | Additional comma-separated model IDs to show           |
 | `opencodex.systemNotifications` | Native task, approval, and failure notifications       |
 

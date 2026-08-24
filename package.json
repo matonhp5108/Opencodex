@@ -155,6 +155,11 @@
           "default": "{}",
           "description": "JSON object of MCP servers. Each entry may use an HTTP/SSE URL or a stdio command with args, env, and cwd."
         },
+        "opencodex.parallelSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the free Parallel Search MCP server. Search objectives and queries are sent to Parallel; tools that fetch a URL also send that requested URL."
+        },
         "opencodex.extraFreeModels": {
           "type": "string",
           "default": "",
@@ -172,7 +177,8 @@
     "check": "tsc --noEmit",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "package": "npm run check && npm run build && vsce package"
+    "package": "npm run check && npm run build && vsce package",
+    "test:parallel-mcp": "node scripts/test-parallel-mcp.mjs"
   },
   "dependencies": {
     "@ai-sdk/mcp": "^2.0.30",

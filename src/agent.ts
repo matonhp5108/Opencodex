@@ -2015,9 +2015,29 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       const skillBlock = await skillsPromptBlock(this.skillsRoot());
       const projectMemory = await readProjectMemory(root);
       const savedConnections = await loadMcpConnections(this.context);
+      const parallelSearch = this.config().parallelSearch;
       if (Array.isArray(savedConnections) && savedConnections.length > 0) {
+        const connections = savedConnections.some(
+          (connection) => connection.name.toLowerCase() === "parallelsearch",
+        )
+          ? savedConnections
+          : parallelSearch
+            ? [
+                ...savedConnections,
+                {
+                  id: "opencodex-parallel-search",
+                  name: "parallelSearch",
+                  description: "Parallel Search MCP",
+                  url: "https://search.parallel.ai/mcp",
+                  transport: "http" as const,
+                  auth: { type: "none" as const },
+                  enabled: true,
+                  order: savedConnections.length,
+                },
+              ]
+            : savedConnections;
         mcpConnection = await connectToMcpConnections(
-          savedConnections,
+          connections,
           root.fsPath,
           (title, detail) => this.approve("command", title, detail),
           this.context,
@@ -2027,6 +2047,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           this.config().mcpServers,
           root.fsPath,
           (title, detail) => this.approve("command", title, detail),
+          parallelSearch,
         );
       }
       const instructions = [
@@ -2685,6 +2706,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         "opencodex.mcpServers",
         config.get<string>("mcpServers", "{}"),
       ),
+      parallelSearch: config.get<boolean>("parallelSearch", false),
       extraFreeModels: (config.get<string>("extraFreeModels", "") ?? "")
         .split(",")
         .map((item) => item.trim())

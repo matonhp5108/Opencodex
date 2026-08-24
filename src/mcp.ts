@@ -25,6 +25,9 @@ type StdioServer = {
 };
 type McpServer = HttpServer | StdioServer;
 
+export const PARALLEL_SEARCH_MCP_URL = "https://search.parallel.ai/mcp";
+const PARALLEL_SEARCH_SERVER_NAME = "parallelSearch";
+
 function safeName(value: string): string {
   const safe = value
     .toLowerCase()
@@ -99,12 +102,36 @@ export function parseMcpServers(raw: string): Record<string, McpServer> {
   return result;
 }
 
+export function withParallelSearchServer(
+  definitions: Record<string, McpServer>,
+  enabled: boolean,
+  url = PARALLEL_SEARCH_MCP_URL,
+): Record<string, McpServer> {
+  if (
+    !enabled ||
+    Object.keys(definitions).some(
+      (name) => name.toLowerCase() === PARALLEL_SEARCH_SERVER_NAME.toLowerCase(),
+    )
+  )
+    return definitions;
+  return {
+    ...definitions,
+    [PARALLEL_SEARCH_SERVER_NAME]: { url, transport: "http" },
+  };
+}
+
 export async function connectMcpServers(
   raw: string,
   workspaceRoot: string,
   approve: (title: string, detail: string) => Promise<void>,
+  parallelSearch = false,
+  parallelSearchUrl = PARALLEL_SEARCH_MCP_URL,
 ): Promise<McpConnection> {
-  const definitions = parseMcpServers(raw);
+  const definitions = withParallelSearchServer(
+    parseMcpServers(raw),
+    parallelSearch,
+    parallelSearchUrl,
+  );
   const clients: MCPClient[] = [];
   const tools: Record<string, any> = {};
   const instructions: string[] = [];
