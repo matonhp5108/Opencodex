@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { truncate } from "./util";
+import { truncate } from "../util";
 
 export function isGitTrackedWorkspace(rootPath?: string): boolean {
   if (!rootPath) return false;

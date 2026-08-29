@@ -2,7 +2,7 @@
   "name": "opencodex-agent",
   "displayName": "Opencodex",
   "description": "A free, open-source coding agent inside VS Code.",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "publisher": "EvaanChowdhry",
   "license": "MIT",
   "engines": {
@@ -105,6 +105,34 @@
       {
         "command": "opencodex.testStarPrompt",
         "title": "Opencodex: Test Star Prompt"
+      },
+      {
+        "command": "opencodex.worktrees",
+        "title": "Opencodex: Git Worktrees Dashboard"
+      },
+      {
+        "command": "opencodex.browserTests",
+        "title": "Opencodex: Browser Testing"
+      },
+      {
+        "command": "opencodex.github",
+        "title": "Opencodex: GitHub Workflows"
+      },
+      {
+        "command": "opencodex.checkpoints",
+        "title": "Opencodex: Shadow Checkpoints"
+      },
+      {
+        "command": "opencodex.index",
+        "title": "Opencodex: Repository Index & Search"
+      },
+      {
+        "command": "opencodex.agents",
+        "title": "Opencodex: Custom Agents"
+      },
+      {
+        "command": "opencodex.tasks",
+        "title": "Opencodex: Scheduled Tasks & Hooks"
       }
     ],
     "menus": {
@@ -164,6 +192,41 @@
           "type": "boolean",
           "default": true,
           "description": "Show native Opencodex system notifications (task completed, approval needed, task failed) when VS Code is not focused."
+        },
+        "opencodex.worktrees": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable isolated Git worktrees/branches for parallel tasks with a monitor/compare/merge/discard dashboard."
+        },
+        "opencodex.browserTesting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Playwright-based browser testing (DOM and accessibility inspection, clicks/typing, console/network capture, responsive geometry, screenshots)."
+        },
+        "opencodex.githubWorkflows": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable GitHub issue-to-PR workflows: branches, commits, PR creation, CI monitoring, and review-comment fixes."
+        },
+        "opencodex.shadowCheckpoints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture a persistent shadow-Git checkpoint after every edit or command, including untracked files, with comparison and selective restore."
+        },
+        "opencodex.repoIndex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable incremental repository indexing, semantic/symbol search, architecture mapping, and source-cited memory."
+        },
+        "opencodex.customAgents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable user-defined custom agents with their own prompts, models, tool permissions, skills, MCP servers, and automatic routing."
+        },
+        "opencodex.tasksHooks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable scheduled/event-triggered tasks and pre/post-tool hooks for policies, validation, and logging."
         }
       }
     }
@@ -178,6 +241,7 @@
     "@ai-sdk/mcp": "^2.0.30",
     "@ai-sdk/openai-compatible": "^3.0.26",
     "ai": "^7.0.57",
+    "playwright": "^1.62.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

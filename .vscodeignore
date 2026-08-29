@@ -8,3 +8,6 @@ tsconfig.json
 .DS_Store
 dist/extension.js.map
 node_modules/**
+!node_modules/playwright/**
+!node_modules/playwright-core/**
+.test-build/**

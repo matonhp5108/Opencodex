@@ -329,4 +329,3 @@ export async function fetchProviderModels(
     throw new Error(`${provider.name} currently lists no compatible models.`);
   return models;
 }
- 

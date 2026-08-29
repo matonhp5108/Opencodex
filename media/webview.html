@@ -1,0 +1,759 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src {{CSP_SOURCE}} data:; style-src {{CSP_SOURCE}} 'unsafe-inline'; script-src {{CSP_SOURCE}} 'nonce-{{NONCE}}';"
+    />
+    <link rel="stylesheet" href="{{STYLE_URI}}" />
+  </head>
+  <body>
+    <div class="app">
+      <div class="top">
+        <div class="chat-bar">
+          <button class="conversation-button" id="conversationButton">
+            <span class="conversation-title" id="conversationTitle"
+              >New conversation</span
+            ><svg class="conversation-caret" viewBox="0 0 24 24">
+              <path d="m6 9 6 6 6-6" />
+            </svg></button
+          ><button class="icon" id="newConversation" title="New conversation">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg></button
+          ><button class="icon" id="usageButton" title="Token usage">
+            <svg viewBox="0 0 24 24">
+              <path d="M3 3v18h18" />
+              <rect x="7" y="12" width="3" height="6" rx=".5" />
+              <rect x="12" y="8" width="3" height="10" rx=".5" />
+              <rect x="17" y="4" width="3" height="14" rx=".5" />
+            </svg></button
+          ><button
+            class="icon"
+            id="marketplaceButton"
+            title="Skill marketplace"
+          >
+            <svg viewBox="0 0 24 24">
+              <path d="M3 9l1.5-5h15L21 9" />
+              <path d="M3 9h18" />
+              <path d="M4 9v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9" />
+              <path d="M9 21v-8h6v8" />
+            </svg></button
+          ><button
+            class="icon settings-icon"
+            id="settingsButton"
+            title="Settings"
+          >
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"
+              />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+          <div class="conversation-menu" id="conversationMenu"></div>
+        </div>
+      </div>
+      <div id="plan"></div>
+      <div id="messages">
+        <div class="empty" id="empty">
+          <div class="empty-inner">
+            <img class="empty-mark" src="{{MARK_URI}}" alt="" />
+            <h2>What should I build?</h2>
+          </div>
+        </div>
+      </div>
+      <button class="jump-bottom" id="jumpBottom" title="Jump to latest">
+        <svg class="jump-arrow" viewBox="0 0 24 24">
+          <path d="M12 5v14M19 12l-7 7-7-7" /></svg
+        ><span class="jump-spinner"></span>
+      </button>
+      <div class="composer">
+        <div class="queued" id="editingBanner">
+          <span class="queued-text">Editing message…</span
+          ><button id="cancelEdit" title="Cancel edit">×</button>
+        </div>
+        <div class="queued" id="queued">
+          <span class="queued-text" id="queuedText"></span
+          ><button id="steerQueued">Steer</button
+          ><button id="editQueued" title="Edit queued prompt">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg></button
+          ><button id="removeQueued" title="Remove queued prompt">×</button>
+        </div>
+        <div class="box">
+          <textarea
+            id="input"
+            placeholder="Ask Opencodex to change your code…"
+          ></textarea>
+          <div class="context-row">
+            <div class="context-chips" id="contextChips"></div>
+          </div>
+          <div
+            class="project-indicator"
+            id="projectIndicator"
+            title="Current folder in VS Code"
+          >
+            <svg class="project-folder" viewBox="0 0 24 24">
+              <path
+                d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.6 3.9A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+              /></svg
+            ><span class="project-indicator-name" id="projectIndicatorName"
+              >No folder open</span
+            >
+          </div>
+          <div class="actions">
+            <div class="dropdown" id="modelDropdown">
+              <button
+                class="model-select dropdown-button"
+                id="modelButton"
+                type="button"
+                title="Choose a model"
+              >
+                Choose free model…
+              </button>
+              <div class="dropdown-menu" id="modelMenu"></div>
+            </div>
+            <select
+              class="model-select approval-select"
+              id="approvalMode"
+              title="Approval mode"
+            />
+              <option value="ask">Ask every time</option>
+              <option value="edits">Auto edits</option>
+              <option value="autonomous">Open access</option></select
+            ><button class="send" id="send" title="Send">
+              <svg class="send-svg" viewBox="0 0 24 24">
+                <path d="M7.5 5.5 19 12 7.5 18.5Z" /></svg
+              ><svg class="stop-svg" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="usage" id="usageView">
+      <div class="usage-top">
+        <button class="icon" id="usageBack" title="Back to chat">
+          <svg viewBox="0 0 24 24">
+            <path d="M19 12H5" />
+            <path d="m12 19-7-7 7-7" />
+          </svg></button
+        ><span class="usage-title">Token usage</span
+        ><button class="icon" id="usageRefresh" title="Refresh">
+          <svg viewBox="0 0 24 24">
+            <path d="M3 12a9 9 0 0 1 15.5-6.5L21 8" />
+            <path d="M21 3v5h-5" />
+            <path d="M21 12a9 9 0 0 1-15.5 6.5L3 16" />
+            <path d="M3 21v-5h5" />
+          </svg>
+        </button>
+      </div>
+      <div class="usage-nav" id="usageNav"></div>
+      <div class="usage-content" id="usageContent">
+        <div class="usage-empty">Loading…</div>
+      </div>
+    </div>
+    <div class="marketplace" id="marketplaceView">
+      <div class="marketplace-top">
+        <button class="icon" id="marketplaceBack" title="Back to chat">
+          <svg viewBox="0 0 24 24">
+            <path d="M19 12H5" />
+            <path d="m12 19-7-7 7-7" />
+          </svg></button
+        ><span class="usage-title">Skill Marketplace</span
+        ><button class="icon" id="marketplaceRefresh" title="Refresh">
+          <svg viewBox="0 0 24 24">
+            <path d="M3 12a9 9 0 0 1 15.5-6.5L21 8" />
+            <path d="M21 3v5h-5" />
+            <path d="M21 12a9 9 0 0 1-15.5 6.5L3 16" />
+            <path d="M3 21v-5h5" />
+          </svg>
+        </button>
+      </div>
+      <div class="marketplace-nav" id="marketplaceNav"></div>
+      <div class="marketplace-search" id="marketplaceSearch">
+        <div class="marketplace-search-row">
+          <input
+            id="marketplaceQuery"
+            type="text"
+            spellcheck="false"
+            placeholder="Search skills, e.g. react testing, web scraper…"
+          /><select
+            class="model-select approval-select"
+            id="marketplaceSort"
+            title="Sort by"
+          >
+            <option value="stars">Top rated</option>
+            <option value="recent">Recently updated</option></select
+          ><button class="icon" id="marketplaceSearchBtn" title="Search">
+            <svg viewBox="0 0 24 24">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+          </button>
+        </div>
+        <div class="marketplace-repo-row">
+          <input
+            id="marketplaceRepo"
+            type="text"
+            spellcheck="false"
+            placeholder="Browse a GitHub repo: owner/repo"
+          /><button class="small-btn" id="marketplaceRepoBtn">
+            List skills
+          </button>
+        </div>
+      </div>
+      <div class="marketplace-body">
+        <div class="marketplace-pane active" id="marketplaceDiscover">
+          <div class="marketplace-status" id="marketplaceStatus"></div>
+          <div class="marketplace-section" id="marketplaceResults"></div>
+        </div>
+        <div class="marketplace-pane" id="marketplaceInstalledPane">
+          <div class="marketplace-section" id="marketplaceInstalled"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-backdrop" id="previewModal">
+      <div
+        class="modal preview-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="previewTitle"
+      >
+        <div class="modal-head">
+          <span class="modal-title" id="previewTitle">Skill preview</span
+          ><button class="icon" id="previewClose" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="preview-content" id="previewContent">Loading…</div>
+        </div>
+        <div class="preview-progress" id="previewProgress">
+          <div class="skill-progress-bar">
+            <div class="skill-progress-fill" id="previewProgressFill"></div>
+          </div>
+          <div class="skill-progress-label" id="previewProgressLabel"></div>
+        </div>
+        <div class="modal-actions">
+          <span class="spacer"></span
+          ><button class="primary" id="previewInstall">Install</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="addMcpBackdrop">
+      <div
+        class="plugin-modal"
+        id="addMcpModal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="addMcpTitle"
+      >
+        <div class="plugin-head">
+          <div class="plugin-head-text">
+            <h2 class="plugin-title" id="addMcpTitle">New Plugin</h2>
+          </div>
+          <button class="icon plugin-close" id="addMcpClose" aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div class="plugin-body">
+          <div class="plugin-top">
+            <div class="plugin-id-fields">
+              <div class="field">
+                <label for="mcpName">Name</label
+                ><input id="mcpName" type="text" placeholder="My MCP server" />
+              </div>
+              <div class="field">
+                <label for="mcpDescription">Description</label
+                ><input
+                  id="mcpDescription"
+                  type="text"
+                  placeholder="Optional description"
+                />
+              </div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Connection</label>
+            <div class="segmented" id="mcpMode" role="tablist">
+              <button type="button" class="seg active" data-mode="url">
+                Server URL</button
+              ><button type="button" class="seg" data-mode="tunnel">
+                Tunnel
+              </button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="mcpUrl" id="mcpUrlLabel">Server URL</label
+            ><input
+              id="mcpUrl"
+              type="text"
+              placeholder="https://example.com/mcp"
+            />
+          </div>
+          <div class="field">
+            <label for="mcpTransport">Protocol</label
+            ><select id="mcpTransport" class="model-select">
+              <option value="http">Streamable HTTP</option>
+              <option value="sse">SSE (legacy)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mcpAuthType">Authentication</label
+            ><select id="mcpAuthType" class="model-select">
+              <option value="none">Auto</option>
+              <option value="oauth2">OAuth</option>
+              <option value="bearer">Bearer token</option>
+              <option value="basic">Basic (username / password)</option>
+              <option value="api-key">API Key</option>
+              <option value="header">Custom headers</option>
+              <option value="custom">Custom (JSON headers)</option>
+            </select>
+          </div>
+          <div id="mcpAuthFields"></div>
+          <details class="oauth-advanced hidden" id="oauthAdvanced">
+            <summary>
+              <span>Advanced</span
+              ><svg class="chev" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </summary>
+            <div class="oauth-advanced-body">
+              <div class="field">
+                <label for="authOauthTokenUrl">Token URL</label
+                ><input
+                  id="authOauthTokenUrl"
+                  type="text"
+                  placeholder="https://.../oauth/token"
+                />
+              </div>
+              <div class="field">
+                <label for="authOauthAuthUrl">Authorization URL</label
+                ><input
+                  id="authOauthAuthUrl"
+                  type="text"
+                  placeholder="https://.../oauth/authorize"
+                />
+              </div>
+              <div class="field">
+                <label for="authOauthClientId">Client ID</label
+                ><input
+                  id="authOauthClientId"
+                  type="text"
+                  placeholder="Required for OAuth authorization"
+                />
+              </div>
+              <div class="field">
+                <label for="authOauthClientSecret">Client secret</label
+                ><input id="authOauthClientSecret" type="password" />
+              </div>
+              <div class="field">
+                <label for="authOauthTokenAuth"
+                  >Token client authentication</label
+                ><select id="authOauthTokenAuth" class="model-select">
+                  <option value="client_secret_basic">
+                    Client secret basic (default)
+                  </option>
+                  <option value="client_secret_post">
+                    Client secret in form body
+                  </option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="authOauthScope">Scope (optional)</label
+                ><input id="authOauthScope" type="text" />
+              </div>
+            </div>
+          </details>
+          <div class="field">
+            <div id="mcpTestResult" class="field-hint">
+              Enter a server URL - Opencodex will detect the right auth
+              automatically.
+            </div>
+          </div>
+        </div>
+        <div class="plugin-foot">
+          <button class="secondary" id="addMcpCancel" type="button">
+            Cancel</button
+          ><span class="spacer"></span
+          ><button class="primary" id="mcpSave" type="button" disabled>
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="settings" id="settingsView">
+      <div class="settings-top">
+        <button class="icon" id="settingsBack" title="Back to chat">
+          <svg viewBox="0 0 24 24">
+            <path d="M19 12H5" />
+            <path d="m12 19-7-7 7-7" />
+          </svg></button
+        ><span class="usage-title" id="settingsTitle">Opencodex Settings</span>
+      </div>
+      <div class="settings-body">
+        <p class="setup-copy">
+          Choose how Opencodex should work before starting your first
+          conversation. Pick a provider and a free model. OpenCode works
+          anonymously, while cloud providers use a free API key you can paste
+          here.
+        </p>
+        <div class="field">
+          <div class="mcp-section-head">
+            <label for="provider">Default Provider</label
+            ><button
+              class="mcp-add"
+              id="customProviderAdd"
+              title="Add custom OpenAI-compatible provider"
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </button>
+          </div>
+          <select
+            class="model-select"
+            id="provider"
+            style="width: 100%; max-width: none"
+          ></select>
+        </div>
+        <div class="field">
+          <label
+            class="checkbox-label"
+            for="onlyDefaultModels"
+            style="margin: 0"
+            ><input type="checkbox" id="onlyDefaultModels" /><span
+              class="checkbox-box"
+              aria-hidden="true"
+              ><svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M3.5 8.5l3 3 6-6"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            Only show the default provider's models</label
+          >
+        </div>
+        <div class="field" id="apiKeyField">
+          <label for="apiKey">API key</label
+          ><input
+            id="apiKey"
+            type="password"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="Paste API key…"
+          />
+          <p class="field-hint" id="apiKeyHint"></p>
+          <div
+            id="clearApiKeyRow"
+            style="
+              display: none;
+              align-items: center;
+              gap: 9px;
+              margin: 8px 0 0;
+            "
+          >
+            <span
+              id="savedKeyLabel"
+              style="
+                font-size: 11px;
+                color: var(--vscode-descriptionForeground);
+              "
+            ></span
+            ><button type="button" class="small-btn" id="clearApiKey">
+              Remove saved key
+            </button>
+          </div>
+        </div>
+        <div class="field" id="baseUrlField" style="display: none">
+          <label for="baseUrl">Server URL</label
+          ><input
+            id="baseUrl"
+            spellcheck="false"
+            placeholder="http://localhost:11434/v1"
+          />
+        </div>
+        <div class="field">
+          <label for="maxSteps">Maximum agent steps</label>
+          <div class="steps-row">
+            <input id="maxSteps" type="number" min="1" max="50" /><label
+              class="checkbox-label"
+              for="maxStepsUnlimited"
+              ><input type="checkbox" id="maxStepsUnlimited" /><span
+                class="checkbox-box"
+                aria-hidden="true"
+                ><svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path
+                    d="M3.5 8.5l3 3 6-6"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg
+              ></span>
+              Unlimited tasks</label
+            >
+          </div>
+        </div>
+        <div class="field">
+          <label class="checkbox-label" for="confirmDelete" style="margin: 0"
+            ><input type="checkbox" id="confirmDelete" /><span
+              class="checkbox-box"
+              aria-hidden="true"
+              ><svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M3.5 8.5l3 3 6-6"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            Ask before deleting conversations</label
+          >
+        </div>
+       
+        <div class="field">
+          <label for="searxngUrl">SearXNG URL (optional, recommended)</label
+          ><input
+            id="searxngUrl"
+            spellcheck="false"
+            placeholder="http://localhost:8888"
+          />
+          <details class="learn-more">
+            <summary>Learn more</summary>
+            <p>
+              Lets the model search the web for current information and useful
+              sources when a task needs them. Leave this blank to disable web
+              search.
+              <a
+                href="https://docs.searxng.org/admin/installation.html"
+                target="_blank"
+                rel="noopener"
+                >Set up your own SearXNG instance</a
+              >
+            </p>
+          </details>
+        </div>
+        <div class="field">
+          <div class="mcp-section-head">
+            <label>MCP Connections</label
+            ><button
+              class="mcp-add"
+              id="mcpAddSettings"
+              title="Add MCP Connection"
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </button>
+          </div>
+          <div class="mcp-picker" id="mcpPicker"></div>
+        </div>
+        <div class="field">
+          <label for="systemPrompt">System prompt (optional)</label
+          ><textarea
+            id="systemPrompt"
+            rows="3"
+            spellcheck="false"
+            placeholder="Extra instructions sent with every request…"
+          ></textarea>
+        </div>
+        <div class="field">
+          <label for="extraFreeModels">Extra free model IDs (optional)</label
+          ><input
+            id="extraFreeModels"
+            spellcheck="false"
+            placeholder="model-a, model-b"
+          />
+        </div>
+        <div class="settings-result" id="settingsResult"></div>
+      </div>
+      <div class="settings-actions">
+        <button class="secondary" id="resetSettings">Reset to defaults</button>
+      </div>
+    </div>
+    <div class="modal-backdrop" id="customProviderBackdrop">
+      <div
+        class="modal"
+        id="customProviderModal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="customProviderTitle"
+      >
+        <div class="modal-head">
+          <span class="modal-title" id="customProviderTitle"
+            >Add custom provider</span
+          ><button class="icon" id="customProviderClose" aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label for="customProviderName">Name</label
+            ><input
+              id="customProviderName"
+              type="text"
+              placeholder="My local server"
+            />
+          </div>
+          <div class="field">
+            <label for="customProviderBaseUrl">Base URL</label
+            ><input
+              id="customProviderBaseUrl"
+              type="text"
+              spellcheck="false"
+              placeholder="https://api.example.com/v1"
+            />
+            <p class="field-hint">Must be OpenAI-compatible.</p>
+          </div>
+          <div class="field">
+            <label
+              class="checkbox-label"
+              for="customProviderNeedsKey"
+              style="margin: 0"
+              ><input type="checkbox" id="customProviderNeedsKey" /><span
+                class="checkbox-box"
+                aria-hidden="true"
+                ><svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path
+                    d="M3.5 8.5l3 3 6-6"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg
+              ></span>
+              Requires an API key</label
+            >
+          </div>
+          <div
+            class="field"
+            id="customProviderApiKeyField"
+            style="display: none"
+          >
+            <label for="customProviderApiKey"
+              >API key <span style="opacity: 0.7">(optional)</span></label
+            ><input
+              id="customProviderApiKey"
+              type="password"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="Paste API key…"
+            />
+            <p class="field-hint" id="customProviderKeyHint"></p>
+          </div>
+          <p class="field-hint" id="customProviderResult"></p>
+        </div>
+        <div class="modal-actions">
+          <button
+            class="secondary"
+            id="customProviderDelete"
+            style="display: none"
+          >
+            Delete</button
+          ><span class="spacer"></span
+          ><button class="secondary" id="customProviderCancel">Cancel</button
+          ><button class="primary" id="customProviderSave">Save</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-backdrop" id="mcpToolsBackdrop">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mcpToolsTitle"
+      >
+        <div class="modal-head">
+          <span class="modal-title" id="mcpToolsTitle">Exposed tools</span
+          ><button class="icon" id="mcpToolsClose" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="mcp-tools-list" id="mcpToolsList"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-backdrop" id="notifyBackdrop">
+      <div
+        class="modal notify-modal"
+        id="notifyModal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="notifyTitle"
+      >
+        <div class="modal-head">
+          <span class="notify-title-icon" id="notifyIcon"
+            ><svg viewBox="0 0 24 24">
+              <path
+                d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"
+              />
+              <path d="M12 9v4" />
+              <path d="M12 17h.01" /></svg></span
+          ><span class="modal-title" id="notifyTitle"></span
+          ><button class="icon" id="notifyClose" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="notify-body" id="notifyBody"></p>
+        </div>
+        <div class="modal-actions notify-actions">
+          <button
+            class="secondary"
+            id="notifySecondary"
+            style="display: none"
+          ></button
+          ><span class="spacer"></span
+          ><button class="secondary" id="notifyCancel"></button
+          ><button class="primary" id="notifyOk"></button>
+        </div>
+      </div>
+    </div>
+    <div
+      class="modal-backdrop browser-viewer-backdrop"
+      id="browserViewerBackdrop"
+    >
+      <div
+        class="browser-viewer-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Browser page viewer"
+      >
+        <button
+          class="browser-viewer-close"
+          id="browserViewerClose"
+          aria-label="Close browser viewer"
+        >
+          ×
+        </button>
+        <div class="browser-viewer-stage">
+          <img
+            class="browser-viewer-image"
+            id="browserViewerImage"
+            src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+            alt="Browser page"
+          /><span
+            class="browser-cursor-marker"
+            id="browserViewerCursor"
+            aria-hidden="true"
+          ></span>
+        </div>
+      </div>
+    </div>
+    <script nonce="{{NONCE}}">
+      window.__OPENCODEX_CONFIG__={{CONFIG_JSON}};
+    </script>
+    <script nonce="{{NONCE}}" src="{{SCRIPT_URI}}"></script>
+  </body>
+</html>

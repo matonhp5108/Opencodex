@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
-import { runCommand } from "./git";
+import { runCommand } from "./features/git";
 import {
   installSkillFromRepository,
   listInstalledSkills,
@@ -11,7 +11,7 @@ import {
   resolveInstallPath,
   sanitizeSkillName,
   searchSkills,
-} from "./skills";
+} from "./features/skills";
 import { MAX_FILE_BYTES } from "./types";
 import type { AppConfig } from "./types";
 import {
@@ -21,7 +21,7 @@ import {
   pathInside,
   truncate,
 } from "./util";
-import type { TerminalManager } from "./terminal";
+import type { TerminalManager } from "./features/terminal";
 
 export interface ToolContext {
   root: vscode.Uri;
@@ -227,7 +227,12 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
         if (!(await vscode.workspace.applyEdit(edit)))
           throw new Error("VS Code rejected the edit.");
         await vscode.workspace.saveAll(false);
-        ctx.post({ type: "changed", path: filePath });
+        ctx.post({
+          type: "changed",
+          path: filePath,
+          action: exists ? "Modified" : "Created",
+          before,
+        });
         return `Wrote ${filePath} (${content.length} characters).`;
       },
     }),
@@ -285,7 +290,12 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
         if (!(await vscode.workspace.applyEdit(edit)))
           throw new Error("VS Code rejected the edit.");
         await document.save();
-        ctx.post({ type: "changed", path: filePath });
+        ctx.post({
+          type: "changed",
+          path: filePath,
+          action: "Modified",
+          before: source,
+        });
         return `Updated ${filePath}.`;
       },
     }),
@@ -330,7 +340,12 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
           recursive: false,
           useTrash: false,
         });
-        ctx.post({ type: "changed", path: filePath, action: "Deleted" });
+        ctx.post({
+          type: "changed",
+          path: filePath,
+          action: "Deleted",
+          before,
+        });
         return `Deleted ${filePath}.`;
       },
     }),
@@ -474,7 +489,6 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
       }),
       execute: async ({ content, reason }) => {
         await ctx.memory?.write(content, reason);
-        ctx.post({ type: "changed", path: ctx.memory?.path });
         return `Updated ${ctx.memory?.path}.`;
       },
     });

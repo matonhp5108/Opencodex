@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { AgentViewProvider } from "./agent";
+import { FeatureRuntime } from "./features/runtime";
+import { systemNotify } from "./features/notifications";
 
 async function revealChat(): Promise<void> {
   try {
@@ -11,8 +13,18 @@ async function revealChat(): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const provider = new AgentViewProvider(context);
+  const features = new FeatureRuntime(context);
+  const provider = new AgentViewProvider(context, features);
+  features.setBrowserPreviewSink((preview) =>
+    provider.showBrowserPreview(preview),
+  );
+  features.setTaskRunner((prompt, agentId) =>
+    provider.runScheduledTask(
+      agentId ? `@opencodex-agent(${agentId}) ${prompt}` : prompt,
+    ),
+  );
   context.subscriptions.push(
+    features,
     provider,
     vscode.window.registerWebviewViewProvider("opencodex.chat", provider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -35,6 +47,26 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodex.addMcp", () =>
       provider.showAddMcp(),
     ),
+    vscode.commands.registerCommand("opencodex.testSystemNotification", () => {
+      systemNotify(context, {
+        subtitle: "Opencodex notification test",
+        message: "System notifications are working.",
+      });
+      if (vscode.window.state.focused)
+        void vscode.window.showInformationMessage(
+          "Opencodex notification test passed. Native notifications appear when VS Code is not focused.",
+        );
+    }),
+    vscode.commands.registerCommand("opencodex.testStarPrompt", async () => {
+      const choice = await vscode.window.showInformationMessage(
+        "Enjoying Opencodex? Consider starring the repo on GitHub.",
+        "Star on GitHub",
+      );
+      if (choice === "Star on GitHub")
+        await vscode.env.openExternal(
+          vscode.Uri.parse("https://github.com/matonhp5108/Opencodex"),
+        );
+    }),
     vscode.window.registerUriHandler({
       handleUri: (uri) => provider.handleUri(uri),
     }),

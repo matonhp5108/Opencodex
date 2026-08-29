@@ -10,7 +10,7 @@ import type {
   McpOAuthTokens,
   McpToolSummary,
   McpConnectionStatus,
-} from "./types";
+} from "../types";
 
 type HttpServer = {
   url: string;
@@ -176,7 +176,7 @@ export {
   type McpAuthType,
   type McpAuthConfig,
   type McpConnectionData,
-} from "./types";
+} from "../types";
 
 export async function saveMcpConnection(
   connection: McpConnectionData,

@@ -1,7 +1,7 @@
 import * as path from "node:path";
-import type { Provider } from "./providers";
+import type { Provider } from "./features/providers";
 import { MAX_TOOL_OUTPUT } from "./types";
-import type { TranscriptItem, WorkItem } from "./types";
+import type { EditedFile, TranscriptItem, WorkItem } from "./types";
 
 export function pathInside(root: string, candidate: string): boolean {
   const rel = path.relative(root, candidate);
@@ -20,6 +20,7 @@ export function createTranscriptItem(
   gitTree?: string,
   work?: WorkItem[],
   seconds?: number,
+  editedFiles?: EditedFile[],
 ): TranscriptItem {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -30,6 +31,7 @@ export function createTranscriptItem(
     gitTree,
     work,
     seconds,
+    editedFiles,
   };
 }
 
@@ -48,6 +50,9 @@ export function normalizeTranscriptItem(
     gitTree: item.gitTree,
     work: item.work,
     seconds: item.seconds,
+    editedFiles: item.editedFiles,
+    undoId: item.undoId,
+    undone: item.undone,
   };
 }
 

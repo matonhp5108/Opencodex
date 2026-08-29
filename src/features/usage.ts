@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { UsageRecord } from "./types";
+import type { UsageRecord } from "../types";
 
 const USAGE_STORAGE_KEY = "opencodex.usage";
 const DAY_MS = 24 * 60 * 60 * 1000;

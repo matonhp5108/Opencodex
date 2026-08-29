@@ -12,6 +12,13 @@ export type WebMessage =
   | { type: "archiveConversation"; id: string }
   | { type: "deleteConversation"; id: string }
   | { type: "restoreCheckpoint"; conversationId: string; itemId: string }
+  | { type: "undoChanges"; conversationId: string; itemId: string }
+  | {
+      type: "editMessage";
+      conversationId: string;
+      itemId: string;
+      text: string;
+    }
   | { type: "copyText"; text: string }
   | { type: "steerQueued"; conversationId: string }
   | { type: "removeQueued"; conversationId: string }
@@ -44,6 +51,12 @@ export type WebMessage =
   | { type: "deleteCustomProvider"; id: string }
   | { type: "resetSettings" }
   | { type: "openFile"; path: string }
+  | {
+      type: "reviewDiff";
+      conversationId: string;
+      itemId: string;
+      path: string;
+    }
   | { type: "chooseContext" }
   | { type: "openMemory" }
   | { type: "revealInOS" }
@@ -149,6 +162,7 @@ export type McpConnectionStatus = {
 export type WorkItem = {
   kind: "reasoning" | "task" | "plan";
   text: string;
+  answerOffset?: number;
   done?: boolean;
   title?: string;
   steps?: string[];
@@ -156,6 +170,13 @@ export type WorkItem = {
   doneSteps?: number[];
   interrupted?: boolean;
   manual?: boolean;
+};
+
+export type EditedFile = {
+  path: string;
+  action?: string;
+  added?: number;
+  removed?: number;
 };
 
 export type TranscriptItem = {
@@ -167,6 +188,9 @@ export type TranscriptItem = {
   gitTree?: string;
   work?: WorkItem[];
   seconds?: number;
+  editedFiles?: EditedFile[];
+  undoId?: string;
+  undone?: boolean;
 };
 
 export type Conversation = {
@@ -320,4 +344,3 @@ export interface McpConnection {
 
 export const MAX_FILE_BYTES = 250_000;
 export const MAX_TOOL_OUTPUT = 40_000;
-export const MAX_PERSISTED_REASONING = 3_000;

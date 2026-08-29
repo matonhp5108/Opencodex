@@ -83,6 +83,16 @@ That is enough to begin. API keys, Ollama, SkillsMP, and SearXNG are optional.
 - Review token usage by model and provider
 - Keep durable project decisions in `.opencodex/memory.md`
 
+### Build and verify larger changes
+
+- **Parallel worktrees:** Create isolated branches under `.opencodex/worktrees`, open each task in its own VS Code window, inspect its status, merge it into the main worktree, or discard it.
+- **Browser testing:** Launch Chromium, follow the animated agent cursor in a small preview attached to its reasoning, open that preview in a read-only viewer, click controls, type through real keyboard events, press keys and shortcuts, inspect the DOM and accessibility tree, collect console and network failures, test mobile through desktop geometry, and save full-page screenshots.
+- **GitHub workflows:** Browse issues, create an implementation branch, inspect the current pull request, and monitor CI. The agent can also create an approved pull request through the authenticated `gh` CLI.
+- **Shadow checkpoints:** Capture tracked and untracked files after mutating agent tools. Restore the full workspace or selected files without changing the normal Git index. A safety checkpoint is created before every restore.
+- **Repository intelligence:** Search symbols and semantically relevant files, or build an import and package architecture map.
+- **Custom agents:** Define repository agents in `.opencodex/agents.json`, including their prompt, model, provider, allowed tools, skills, MCP servers, and routing keywords.
+- **Tasks and hooks:** Define recurring or one-time prompts and lifecycle policies in `.opencodex/automations.json`. Hooks can log, warn, require approval, or block matching tool actions.
+
 ![Opencodex token usage grouped by model and provider](media/usage.png)
 
 ## Model providers
@@ -165,16 +175,23 @@ See the [SearXNG installation documentation](https://docs.searxng.org/admin/inst
 
 ## Commands
 
-| Command                               | Description                                         |
-| ------------------------------------- | --------------------------------------------------- |
-| `Opencodex: Open Chat`                | Open Opencodex in the secondary sidebar             |
-| `Opencodex: Focus Chat`               | Focus the current chat                              |
-| `Opencodex: Open Settings`            | Open provider and agent settings                    |
-| `Opencodex: Show Token Usage`         | Review recent input and output token usage          |
-| `Opencodex: Open Project Memory`      | Open the active folder's durable memory file        |
-| `Opencodex: Skill Marketplace`        | Browse, preview, and install skills                 |
-| `Opencodex: New Chat`                 | Start a new conversation                            |
-| `Opencodex: Test System Notification` | Verify native notifications on the current platform |
+| Command                                | Description                                         |
+| -------------------------------------- | --------------------------------------------------- |
+| `Opencodex: Open Chat`                 | Open Opencodex in the secondary sidebar             |
+| `Opencodex: Focus Chat`                | Focus the current chat                              |
+| `Opencodex: Open Settings`             | Open provider and agent settings                    |
+| `Opencodex: Show Token Usage`          | Review recent input and output token usage          |
+| `Opencodex: Open Project Memory`       | Open the active folder's durable memory file        |
+| `Opencodex: Skill Marketplace`         | Browse, preview, and install skills                 |
+| `Opencodex: New Chat`                  | Start a new conversation                            |
+| `Opencodex: Test System Notification`  | Verify native notifications on the current platform |
+| `Opencodex: Git Worktrees Dashboard`   | Create and manage isolated task worktrees           |
+| `Opencodex: Browser Testing`           | Run a semantic and visual browser check             |
+| `Opencodex: GitHub Workflows`          | Work with issues, pull requests, and CI             |
+| `Opencodex: Shadow Checkpoints`        | Capture, inspect, and restore checkpoints           |
+| `Opencodex: Repository Index & Search` | Search symbols and repository concepts              |
+| `Opencodex: Custom Agents`             | Open the repository agent configuration             |
+| `Opencodex: Scheduled Tasks & Hooks`   | Open task and lifecycle hook configuration          |
 
 ## Requirements
 
@@ -183,6 +200,8 @@ See the [SearXNG installation documentation](https://docs.searxng.org/admin/inst
 - Optional: a free provider API key for OpenRouter, Groq, Gemini, or Mistral
 - Optional: Ollama for fully local models
 - Optional: SearXNG for web search
+- Optional: Google Chrome or a Playwright Chromium installation for browser testing
+- Optional: GitHub CLI authenticated with `gh auth login` for GitHub workflows
 
 ## Development
 
@@ -191,6 +210,7 @@ git clone https://github.com/matonhp5108/Opencodex.git
 cd Opencodex
 npm install
 npm run check
+npm test
 npm run build
 ```
 
@@ -208,7 +228,8 @@ The package command type-checks the project, builds the extension, and creates a
 - Mistral does not expose a free-model marker, so its built-in list is curated.
 - Web search requires a user-provided SearXNG instance.
 - Skills search and installation use SkillsMP and GitHub; unauthenticated GitHub API limits may apply.
-- Restore points cover Git-tracked files and are available only for newer responses that captured a Git state.
+- Legacy response restore points cover Git-tracked files. Shadow checkpoints also include untracked files.
+- Browser tests verify behavior, accessibility data, console and network health, and measurable layout. Text-only models cannot verify subjective appearance.
 - Persistent terminal sessions use piped shells rather than a full PTY, so full-screen terminal applications are not supported.
 
 ## Support and contributing

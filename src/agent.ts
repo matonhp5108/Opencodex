@@ -1,10 +1,15 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
+import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { ToolLoopAgent, isLoopFinished, isStepCount } from "ai";
-import { captureGitTree, isGitTrackedWorkspace, restoreGitTree } from "./git";
+import {
+  captureGitTree,
+  isGitTrackedWorkspace,
+  restoreGitTree,
+} from "./features/git";
 import {
   customProviderConfigToProvider,
   fetchProviderModels,
@@ -13,7 +18,7 @@ import {
   makeCustomProviderId,
   type CustomProviderConfig,
   type Provider,
-} from "./providers";
+} from "./features/providers";
 import {
   installSkillFromRepository,
   listInstalledSkills,
@@ -26,7 +31,7 @@ import {
   uninstallSkill,
   SKILL_FILE_NAMES,
   SKILLS_SUBDIR,
-} from "./skills";
+} from "./features/skills";
 import { buildTools } from "./tools";
 import type {
   AppConfig,
@@ -37,11 +42,12 @@ import type {
   TranscriptItem,
   WebMessage,
   WorkItem,
+  EditedFile,
   McpConnectionData,
   McpAuthConfig,
   McpConnection,
 } from "./types";
-import { MAX_FILE_BYTES, MAX_PERSISTED_REASONING } from "./types";
+import { MAX_FILE_BYTES } from "./types";
 import {
   conversationTitle,
   createTranscriptItem,
@@ -58,14 +64,14 @@ import {
   truncate,
 } from "./util";
 import { getWebviewHtml } from "./webview";
-import { systemNotify } from "./notifications";
+import { systemNotify } from "./features/notifications";
 import {
   aggregateUsage,
   loadUsage,
   markFirstUse,
   maybePromptForStar,
   recordUsage,
-} from "./usage";
+} from "./features/usage";
 import {
   connectMcpServers,
   saveMcpConnection,
@@ -75,14 +81,16 @@ import {
   testMcpConnection,
   connectToMcpConnections,
   checkMcpConnectionStatuses,
-} from "./mcp";
-import { TerminalManager } from "./terminal";
+} from "./features/mcp";
+import { TerminalManager } from "./features/terminal";
 import {
   MEMORY_RELATIVE_PATH,
   openProjectMemory,
   readProjectMemory,
   writeProjectMemory,
-} from "./memory";
+} from "./features/memory";
+import type { FeatureRuntime } from "./features/runtime";
+import type { BrowserPreview } from "./features/runtime";
 
 type PlanState = {
   title: string;
@@ -114,10 +122,44 @@ function notificationSummary(text: string): string {
   return clean.length > 140 ? `${clean.slice(0, 139)}…` : clean;
 }
 
+function countLineDiff(
+  before: string,
+  after: string,
+): { added: number; removed: number } {
+  const a = before.length ? before.split("\n") : [];
+  const b = after.length ? after.split("\n") : [];
+  if (a.length * b.length > 4_000_000) {
+    return {
+      added: Math.max(0, b.length - a.length),
+      removed: Math.max(0, a.length - b.length),
+    };
+  }
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    const row = dp[i]!;
+    const nextRow = dp[i + 1]!;
+    for (let j = b.length - 1; j >= 0; j--) {
+      row[j] =
+        a[i] === b[j]
+          ? nextRow[j + 1]! + 1
+          : Math.max(nextRow[j]!, row[j + 1]!);
+    }
+  }
+  const lcs = dp[0]?.[0] ?? 0;
+  return { added: b.length - lcs, removed: a.length - lcs };
+}
+
 type ActiveRun = {
   conversationId: string;
   controller: AbortController;
   steering: boolean;
+};
+
+type UndoSnapshot = {
+  workspacePath: string;
+  files: Array<{ path: string; existed: boolean; content: string }>;
 };
 
 type ProjectMetaEntry = {
@@ -162,7 +204,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   >();
   private readonly terminals = new TerminalManager();
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly features?: FeatureRuntime,
+  ) {
     this.loadCustomProviders();
     context.subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() =>
@@ -214,6 +259,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     );
     view.onDidDispose(() => this.disposePendingNotifies());
     this.loaded = true;
+    this.features?.replayBrowserPreview();
     this.loadProjects();
     this.syncConversations();
     void this.loadApiKeys().then(() => {
@@ -334,7 +380,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async deleteCustomProvider(id: string): Promise<void> {
-    const list = this.customProviderConfigs().filter((entry) => entry.id !== id);
+    const list = this.customProviderConfigs().filter(
+      (entry) => entry.id !== id,
+    );
     await this.writeCustomProviders(list);
     try {
       await this.context.secrets.delete(`opencodex.apiKey.${id}`);
@@ -563,6 +611,281 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 
   clear(): void {
     this.newConversation();
+  }
+
+  showBrowserPreview(preview?: BrowserPreview): void {
+    this.post({ type: "browserPreview", preview });
+  }
+
+  private undoSnapshotUri(id: string): vscode.Uri {
+    if (!/^[a-z0-9.-]+$/i.test(id)) throw new Error("Invalid undo snapshot.");
+    return vscode.Uri.joinPath(
+      this.context.globalStorageUri,
+      "undo",
+      `${id}.json`,
+    );
+  }
+
+  private async saveUndoSnapshot(
+    itemId: string,
+    workspacePath: string,
+    entries: EditedFile[],
+    beforeByPath: Map<string, string>,
+    existedByPath: Map<string, boolean>,
+  ): Promise<string | undefined> {
+    const files = entries.flatMap((entry) => {
+      const content = beforeByPath.get(entry.path);
+      const existed = existedByPath.get(entry.path);
+      if (content === undefined || existed === undefined) return [];
+      try {
+        this.resolveWorkspacePath(entry.path);
+      } catch {
+        return [];
+      }
+      return [{ path: entry.path, existed, content }];
+    });
+    if (!files.length) return undefined;
+    const snapshot: UndoSnapshot = { workspacePath, files };
+    const uri = this.undoSnapshotUri(itemId);
+    await vscode.workspace.fs.createDirectory(
+      vscode.Uri.joinPath(this.context.globalStorageUri, "undo"),
+    );
+    await vscode.workspace.fs.writeFile(
+      uri,
+      new TextEncoder().encode(JSON.stringify(snapshot)),
+    );
+    return itemId;
+  }
+
+  private async loadUndoSnapshot(
+    id: string,
+  ): Promise<UndoSnapshot | undefined> {
+    try {
+      const raw = new TextDecoder().decode(
+        await vscode.workspace.fs.readFile(this.undoSnapshotUri(id)),
+      );
+      const value = JSON.parse(raw) as Partial<UndoSnapshot>;
+      if (
+        typeof value.workspacePath !== "string" ||
+        !Array.isArray(value.files)
+      )
+        return undefined;
+      const files = value.files.flatMap((entry) =>
+        entry &&
+        typeof entry.path === "string" &&
+        typeof entry.existed === "boolean" &&
+        typeof entry.content === "string"
+          ? [entry]
+          : [],
+      );
+      return { workspacePath: value.workspacePath, files };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async computeEditedFileStats(
+    entries: EditedFile[],
+    beforeByPath: Map<string, string>,
+  ): Promise<EditedFile[]> {
+    return Promise.all(
+      entries.map(async (entry) => {
+        const before = beforeByPath.get(entry.path) ?? "";
+        let after = "";
+        if (entry.action !== "Deleted") {
+          try {
+            const uri = this.resolveWorkspacePath(entry.path);
+            after = new TextDecoder().decode(
+              await vscode.workspace.fs.readFile(uri),
+            );
+          } catch {
+            after = "";
+          }
+        }
+        const { added, removed } = countLineDiff(before, after);
+        return { ...entry, added, removed };
+      }),
+    );
+  }
+
+  private async reviewDiff(
+    conversationId: string,
+    itemId: string,
+    filePath: string,
+  ): Promise<void> {
+    const root = this.workspaceRoot();
+    if (!root) {
+      void vscode.window.showInformationMessage("Open a folder first.");
+      return;
+    }
+    const abs = this.resolveWorkspacePath(filePath);
+    const rel = path.relative(root.fsPath, abs.fsPath).replace(/\\/g, "/");
+    const conversation = this.activeProject()?.conversations.find(
+      (item) => item.id === conversationId,
+    );
+    const item = conversation?.items.find(
+      (entry) => entry.id === itemId && entry.role === "assistant",
+    );
+    const action = item?.editedFiles?.find(
+      (entry) => entry.path === filePath,
+    )?.action;
+    const base = path.basename(abs.fsPath);
+    const snapshot = item?.undoId
+      ? await this.loadUndoSnapshot(item.undoId)
+      : undefined;
+    const undoFile = snapshot?.files.find((entry) => entry.path === filePath);
+    let before = undoFile
+      ? undoFile.existed
+        ? undoFile.content
+        : ""
+      : undefined;
+    if (before === undefined && isGitTrackedWorkspace(root.fsPath)) {
+      try {
+        before = await new Promise<string>((resolve, reject) => {
+          execFile(
+            "git",
+            ["show", `HEAD:${rel}`],
+            { cwd: root.fsPath, maxBuffer: 20 * 1024 * 1024 },
+            (error, stdout) => (error ? reject(error) : resolve(stdout)),
+          );
+        });
+      } catch {
+        before = undefined;
+      }
+    }
+    const tmpDir = await mkdtemp(path.join(tmpdir(), "opencodex-diff-"));
+    const beforeUri = vscode.Uri.file(path.join(tmpDir, `${base}.orig`));
+    await vscode.workspace.fs.writeFile(
+      beforeUri,
+      new TextEncoder().encode(before ?? ""),
+    );
+    let afterUri: vscode.Uri;
+    if (action === "Deleted") {
+      afterUri = vscode.Uri.file(path.join(tmpDir, `${base}.deleted`));
+      await vscode.workspace.fs.writeFile(
+        afterUri,
+        new TextEncoder().encode(""),
+      );
+    } else {
+      afterUri = abs;
+    }
+    const title = `${base} · review changes`;
+    try {
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        beforeUri,
+        afterUri,
+        title,
+      );
+    } catch (error) {
+      vscode.window.showErrorMessage(errorMessage(error));
+    }
+  }
+
+  private async undoChanges(
+    conversationId: string,
+    itemId: string,
+  ): Promise<void> {
+    if (this.runs.size) {
+      void vscode.window.showInformationMessage(
+        "Wait for active tasks to finish before undoing changes.",
+      );
+      return;
+    }
+    const root = this.workspaceRoot();
+    const project = this.activeProject();
+    const conversation = project?.conversations.find(
+      (item) => item.id === conversationId,
+    );
+    const item = conversation?.items.find(
+      (entry) => entry.id === itemId && entry.role === "assistant",
+    );
+    if (
+      !root ||
+      !project ||
+      project.path !== root.fsPath ||
+      !conversation ||
+      !item
+    )
+      return;
+    if (item.undone) {
+      void vscode.window.showInformationMessage(
+        "These response changes have already been undone.",
+      );
+      return;
+    }
+    const snapshot = item.undoId
+      ? await this.loadUndoSnapshot(item.undoId)
+      : undefined;
+    if (
+      !snapshot ||
+      snapshot.workspacePath !== root.fsPath ||
+      !snapshot.files.length
+    ) {
+      void vscode.window.showInformationMessage(
+        "No undo snapshot is available for this response.",
+      );
+      return;
+    }
+    const choice = await this.prompt(
+      "Undo changes from this response?",
+      `Restore ${snapshot.files.length} file${snapshot.files.length === 1 ? "" : "s"} to their previous state. Newer edits to those files will be overwritten.`,
+      { ok: "Undo changes", cancel: "Cancel", danger: true },
+    );
+    if (choice !== "ok") return;
+    try {
+      for (const file of snapshot.files) {
+        const uri = this.resolveWorkspacePath(file.path);
+        if (file.existed) {
+          await vscode.workspace.fs.createDirectory(
+            vscode.Uri.file(path.dirname(uri.fsPath)),
+          );
+          await vscode.workspace.fs.writeFile(
+            uri,
+            new TextEncoder().encode(file.content),
+          );
+        } else {
+          let exists = true;
+          try {
+            await vscode.workspace.fs.stat(uri);
+          } catch {
+            exists = false;
+          }
+          if (exists)
+            await vscode.workspace.fs.delete(uri, {
+              recursive: false,
+              useTrash: false,
+            });
+        }
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Undo failed: ${errorMessage(error)}`,
+      );
+      return;
+    }
+    item.undone = true;
+    conversation.updatedAt = Date.now();
+    project.updatedAt = Date.now();
+    await this.persistProjects();
+    this.syncConversations();
+    void vscode.window.showInformationMessage(
+      `Undid changes to ${snapshot.files.length} file${snapshot.files.length === 1 ? "" : "s"}.`,
+    );
+  }
+
+  async runScheduledTask(prompt: string): Promise<void> {
+    const project = this.ensureProjectForRoot();
+    if (!project) throw new Error("Open a folder or workspace first.");
+    const conversation = this.createConversation();
+    project.conversations.unshift(conversation);
+    project.activeConversationId = conversation.id;
+    project.updatedAt = Date.now();
+    await this.persistProjects();
+    this.syncConversations();
+    if (this.runs.size >= MAX_CONCURRENT_RUNS)
+      this.enqueue(prompt, conversation.id);
+    else void this.run(prompt, conversation.id);
   }
 
   dispose(): void {
@@ -1052,6 +1375,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       void vscode.window.showInformationMessage(
         "Git workspace and conversation restored.",
       );
+      return;
+    }
+    if (message.type === "undoChanges") {
+      await this.undoChanges(message.conversationId, message.itemId);
       return;
     }
     if (message.type === "setKey" || message.type === "requestSettings")
@@ -1618,6 +1945,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       }
       return;
     }
+    if (message.type === "reviewDiff") {
+      void this.reviewDiff(
+        message.conversationId,
+        message.itemId,
+        message.path,
+      );
+      return;
+    }
     if (message.type === "chooseContext") {
       const root = this.workspaceRoot();
       if (!root) return;
@@ -1752,6 +2087,43 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       }
       return;
     }
+    if (message.type === "editMessage") {
+      const project = this.activeProject();
+      const conversation = project?.conversations.find(
+        (item) => item.id === message.conversationId,
+      );
+      if (!project || !conversation || this.runs.has(message.conversationId))
+        return;
+      const targetIndex = conversation.items.findIndex(
+        (item) => item.id === message.itemId && item.role === "user",
+      );
+      const text = message.text.trim();
+      if (targetIndex < 0 || !text) return;
+      const removedCount = conversation.items.length - targetIndex;
+      if (removedCount > 1) {
+        const choice = await this.prompt(
+          "Edit this message?",
+          `This removes ${removedCount - 1} later message${removedCount - 1 === 1 ? "" : "s"} and regenerates the response. This cannot be undone.`,
+          { ok: "Edit & resend", cancel: "Cancel", danger: true },
+        );
+        if (choice !== "ok") return;
+      }
+      conversation.items = conversation.items.slice(0, targetIndex);
+      conversation.updatedAt = Date.now();
+      project.activeConversationId = conversation.id;
+      project.updatedAt = Date.now();
+      await this.persistProjects();
+      this.syncConversations();
+      if (
+        this.runs.has(conversation.id) ||
+        this.runs.size >= MAX_CONCURRENT_RUNS
+      ) {
+        this.enqueue(text, conversation.id);
+      } else {
+        void this.run(text, conversation.id);
+      }
+      return;
+    }
     if (message.type === "retryMessage") {
       const project = this.activeProject();
       const conversation = project?.conversations.find(
@@ -1858,9 +2230,51 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     });
 
     const work: WorkItem[] = resume ? [...(resume.work ?? [])] : [];
+    const editedBefore = new Map<string, string>();
+    const editedExisted = new Map<string, boolean>();
+    const editedFinalExists = new Map<string, boolean>();
+    const editedFiles = new Map<string, EditedFile>();
+    const capturePost = (message: unknown): void => {
+      const changed = message as {
+        type?: string;
+        path?: string;
+        action?: string;
+        before?: string;
+      };
+      if (changed && changed.type === "changed" && changed.path) {
+        if (!editedFiles.has(changed.path)) {
+          editedFiles.set(changed.path, {
+            path: changed.path,
+            action: changed.action,
+          });
+          editedExisted.set(changed.path, changed.action !== "Created");
+        }
+        editedFinalExists.set(changed.path, changed.action !== "Deleted");
+        if (
+          typeof changed.before === "string" &&
+          !editedBefore.has(changed.path)
+        )
+          editedBefore.set(changed.path, changed.before);
+      }
+      this.post(message);
+    };
+    const editedFileEntries = (): EditedFile[] =>
+      [...editedFiles.values()].flatMap((entry) => {
+        const existed = editedExisted.get(entry.path) ?? true;
+        const finalExists = editedFinalExists.get(entry.path) ?? true;
+        if (!existed && !finalExists) return [];
+        return [
+          {
+            ...entry,
+            action: existed
+              ? finalExists
+                ? "Modified"
+                : "Deleted"
+              : "Created",
+          },
+        ];
+      });
     const activeTasks = new Map<string, WorkItem>();
-    let reasoningBuffer = "";
-    let reasoningTruncated = false;
     let workStartedAt = 0;
     let planItem: WorkItem | undefined;
     let planState: PlanState | undefined;
@@ -1941,13 +2355,27 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         postPlan();
       }
     }
+    const customAgent = await this.features?.routedAgent(userText);
+    const baseConfig = this.config();
     const providerConfig = getProvider(
-      this.config().provider,
+      customAgent?.provider || baseConfig.provider,
       this.customProviders,
     );
     try {
+      await this.features?.beforeTool({ event: "onMessage", text: userText });
+      await this.features?.beforeTool({
+        event: "onAgentStart",
+        text: userText,
+      });
       if (gitTracked) runGitTree ??= await captureGitTree(root.fsPath);
-      const { model, maxSteps, apiKey, baseUrl } = this.config();
+      const { maxSteps } = baseConfig;
+      const apiKey = customAgent?.provider
+        ? this.providerApiKey(providerConfig)
+        : baseConfig.apiKey;
+      const baseUrl = customAgent?.provider
+        ? this.providerBaseUrl(providerConfig)
+        : baseConfig.baseUrl;
+      const model = customAgent?.model || baseConfig.model;
       if (!model) {
         await this.refreshModels();
         this.post({
@@ -2031,6 +2459,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       }
       const instructions = [
         this.systemPrompt(root),
+        customAgent
+          ? `You are running as the custom agent "${customAgent.name}".\n${customAgent.systemPrompt}${customAgent.skills.length ? `\nUse only these requested custom skills when relevant: ${customAgent.skills.join(", ")}.` : ""}`
+          : "",
         projectMemory
           ? `Durable project memory from ${MEMORY_RELATIVE_PATH}:\n${projectMemory}`
           : "",
@@ -2057,6 +2488,12 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
             reason ?? "Store durable project context for future conversations.",
           );
           await writeProjectMemory(root, content);
+          capturePost({
+            type: "changed",
+            path: MEMORY_RELATIVE_PATH,
+            action: before ? "Modified" : "Created",
+            before,
+          });
         },
       };
 
@@ -2073,7 +2510,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
             this.approve(kind, title, detail, destructive),
           reviewEdit: (filePath, before, after, reason, destructive) =>
             this.reviewEdit(filePath, before, after, reason, destructive),
-          post: (message) => this.post(message),
+          post: capturePost,
           resolvePath: (filePath) => this.resolveWorkspacePath(filePath),
           describePlan: () =>
             "Subagents do not publish a parent plan. Work directly on the assigned task.",
@@ -2130,7 +2567,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         );
       };
 
-      const agentTools = {
+      let agentTools = {
         ...buildTools({
           root,
           skillsDir: this.skillsRoot(),
@@ -2139,7 +2576,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
             this.approve(kind, title, detail, destructive),
           reviewEdit: (filePath, before, after, reason, destructive) =>
             this.reviewEdit(filePath, before, after, reason, destructive),
-          post: (message) => this.post(message),
+          post: capturePost,
           resolvePath: (filePath) => this.resolveWorkspacePath(filePath),
           describePlan,
           abortSignal: run.controller.signal,
@@ -2147,8 +2584,19 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           delegate,
           memory: memoryAccess,
         }),
+        ...(this.features
+          ? this.features.agentTools(
+              root.fsPath,
+              (kind, title, detail, destructive) =>
+                this.approve(kind, title, detail, destructive),
+            )
+          : {}),
         ...mcpConnection.tools,
       };
+      if (this.features) {
+        agentTools = this.features.decorateTools(agentTools, root.fsPath);
+        agentTools = this.features.restrictTools(agentTools, customAgent);
+      }
 
       const agent = new ToolLoopAgent({
         model: provider(model),
@@ -2284,6 +2732,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
                 planItem = {
                   kind: "plan",
                   text: planState.title,
+                  answerOffset: answer.length,
                   title: planState.title,
                   steps: planState.steps,
                   doneSteps: [],
@@ -2303,9 +2752,20 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
               }
               return;
             }
+            if (toolCall.toolName.startsWith("browser_")) {
+              workStartedAt ||= Date.now();
+              this.post({
+                type: "state",
+                conversationId,
+                running: true,
+                label: "Working",
+              });
+              return;
+            }
             const taskEntry: WorkItem = {
               kind: "task",
               text: toolTask(toolCall.toolName, toolCall.input),
+              answerOffset: answer.length,
               done: false,
             };
             activeTasks.set(toolCall.toolCallId, taskEntry);
@@ -2326,7 +2786,11 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
             });
           },
           onToolExecutionEnd: ({ toolCall }) => {
-            if (toolCall.toolName === "plan") return;
+            if (
+              toolCall.toolName === "plan" ||
+              toolCall.toolName.startsWith("browser_")
+            )
+              return;
             const taskEntry = activeTasks.get(toolCall.toolCallId);
             if (taskEntry) taskEntry.done = true;
             this.post({
@@ -2345,26 +2809,22 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
             this.post({ type: "delta", conversationId, text: part.text });
           } else if (part.type === "reasoning-delta") {
             workStartedAt ||= Date.now();
-            const remaining = MAX_PERSISTED_REASONING - reasoningBuffer.length;
-            if (remaining > 0) reasoningBuffer += part.text.slice(0, remaining);
-            if (reasoningBuffer.length >= MAX_PERSISTED_REASONING)
-              reasoningTruncated = true;
-            this.post({
-              type: "reasoningDelta",
-              conversationId,
-              text: part.text,
-            });
-          } else if (part.type === "reasoning-end") {
-            if (reasoningBuffer.trim())
-              work.push({
-                kind: "reasoning",
-                text:
-                  reasoningBuffer +
-                  (reasoningTruncated ? "\n…(truncated)" : ""),
-              });
-            reasoningBuffer = "";
-            reasoningTruncated = false;
-            this.post({ type: "reasoningEnd" });
+            if (part.text) {
+              this.post({ type: "reasoning", conversationId, text: part.text });
+              const last = work[work.length - 1];
+              if (
+                last &&
+                last.kind === "reasoning" &&
+                last.answerOffset === answer.length
+              )
+                last.text += part.text;
+              else
+                work.push({
+                  kind: "reasoning",
+                  text: part.text,
+                  answerOffset: answer.length,
+                });
+            }
           } else if (part.type === "start-step") {
             workStartedAt ||= Date.now();
             const first = stepCount++ === 0;
@@ -2415,15 +2875,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       this.sendUsage();
       this.maybePromptForStar();
       if (!answer.trim()) answer = "(No response)";
-      if (reasoningBuffer.trim())
-        work.push({
-          kind: "reasoning",
-          text: reasoningBuffer + (reasoningTruncated ? "\n…(truncated)" : ""),
-        });
       const keptWork = work.slice(-80);
       const workSeconds = workStartedAt
         ? Math.max(1, Math.round((Date.now() - workStartedAt) / 1000))
         : 0;
+      const editedFilesList = await this.computeEditedFileStats(
+        editedFileEntries(),
+        editedBefore,
+      );
       const assistantItem = createTranscriptItem(
         "assistant",
         answer,
@@ -2431,6 +2890,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         runGitTree,
         keptWork,
         workSeconds,
+        editedFilesList.length ? editedFilesList : undefined,
+      );
+      assistantItem.undoId = await this.saveUndoSnapshot(
+        assistantItem.id,
+        root.fsPath,
+        editedFilesList,
+        editedBefore,
+        editedExisted,
       );
       conversation.items.push(assistantItem);
       conversation.items = conversation.items.slice(-60);
@@ -2463,12 +2930,10 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           max: 5,
         });
         const message = friendlyError(error, providerConfig);
-        if (reasoningBuffer.trim())
-          work.push({
-            kind: "reasoning",
-            text:
-              reasoningBuffer + (reasoningTruncated ? "\n…(truncated)" : ""),
-          });
+        const editedFilesList = await this.computeEditedFileStats(
+          editedFileEntries(),
+          editedBefore,
+        );
         const errorItem = createTranscriptItem(
           "assistant",
           message,
@@ -2478,6 +2943,14 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
           workStartedAt
             ? Math.max(1, Math.round((Date.now() - workStartedAt) / 1000))
             : 0,
+          editedFilesList.length ? editedFilesList : undefined,
+        );
+        errorItem.undoId = await this.saveUndoSnapshot(
+          errorItem.id,
+          root.fsPath,
+          editedFilesList,
+          editedBefore,
+          editedExisted,
         );
         conversation.items.push(errorItem);
         conversation.items = conversation.items.slice(-60);
@@ -2493,6 +2966,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         });
       }
     } finally {
+      await this.features
+        ?.beforeTool({ event: "onAgentEnd", text: userText })
+        .catch(() => undefined);
       await mcpConnection?.close();
       this.post({
         type: "liveUsage",
