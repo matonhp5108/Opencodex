@@ -3153,6 +3153,9 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
         "opencodex.searxngUrl",
         config.get<string>("searxngUrl", ""),
       ),
+      youcomApiKey:
+        config.get<string>("youcomApiKey", "") ||
+        (process.env.YDC_API_KEY ?? ""),
       systemPrompt: this.context.globalState.get<string>(
         "opencodex.systemPrompt",
         config.get<string>("systemPrompt", ""),

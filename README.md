@@ -160,6 +160,7 @@ Open the gear button in the Opencodex sidebar or run **Opencodex: Open Settings*
 | `opencodex.maxSteps`            | Maximum tool-loop steps; `0` allows unlimited steps    |
 | `opencodex.approvalMode`        | Ask, Auto edits, or Open access                        |
 | `opencodex.searxngUrl`          | Optional SearXNG instance used by the web-search tool  |
+| `opencodex.youcomApiKey`        | Optional You.com API key used by the web-search tool when no SearXNG URL is set |
 | `opencodex.mcpServers`          | JSON configuration for stdio, HTTP, or SSE MCP servers |
 | `opencodex.extraFreeModels`     | Additional comma-separated model IDs to show           |
 | `opencodex.systemNotifications` | Native task, approval, and failure notifications       |
@@ -172,6 +173,8 @@ Set a SearXNG base URL to enable the `web_search` tool. The server must allow JS
 - Dev Containers or remote workspaces: use an address reachable from the extension host, such as the host LAN address or `host.docker.internal` where supported
 
 See the [SearXNG installation documentation](https://docs.searxng.org/admin/installation.html) for setup options.
+
+Alternatively, set `opencodex.youcomApiKey` (or the `YDC_API_KEY` environment variable) to use the [You.com Search API](https://you.com/platform/api-keys) without running a local SearXNG instance. When both are configured, the SearXNG URL takes precedence.
 
 ## Commands
 
@@ -226,7 +229,7 @@ The package command type-checks the project, builds the extension, and creates a
 
 - Free-model catalogs and rate limits are controlled by each provider.
 - Mistral does not expose a free-model marker, so its built-in list is curated.
-- Web search requires a user-provided SearXNG instance.
+- Web search requires either a user-provided SearXNG instance or a You.com API key.
 - Skills search and installation use SkillsMP and GitHub; unauthenticated GitHub API limits may apply.
 - Legacy response restore points cover Git-tracked files. Shadow checkpoints also include untracked files.
 - Browser tests verify behavior, accessibility data, console and network health, and measurable layout. Text-only models cannot verify subjective appearance.

@@ -251,6 +251,7 @@ export interface AppConfig {
   maxSteps: number;
   approvalMode: ApprovalMode;
   searxngUrl: string;
+  youcomApiKey: string;
   systemPrompt: string;
   mcpServers: string;
   extraFreeModels: string[];

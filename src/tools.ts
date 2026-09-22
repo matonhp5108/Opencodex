@@ -683,33 +683,70 @@ export function buildTools(ctx: ToolContext): Record<string, any> {
     },
   });
   const endpoint = ctx.config().searxngUrl;
-  if (endpoint) {
+  const youcomApiKey = ctx.config().youcomApiKey;
+  if (endpoint || youcomApiKey) {
     tools.web_search = tool({
       description:
-        "Search the web through the user-configured SearXNG instance and return result titles, URLs, and snippets.",
+        "Search the web and return result titles, URLs, and snippets. Uses the user-configured SearXNG instance when set, otherwise the You.com Search API.",
       inputSchema: z.object({
         query: z.string().min(1),
         limit: z.number().int().min(1).max(10).default(5),
       }),
       execute: async ({ query, limit }) => {
-        const url = `${endpoint.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json`;
-        const response = await fetch(url, {
+        if (endpoint) {
+          const url = `${endpoint.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json`;
+          const response = await fetch(url, {
+            signal: ctx.abortSignal,
+            headers: { accept: "application/json" },
+          });
+          if (!response.ok)
+            throw new Error(
+              `SearXNG returned HTTP ${response.status}. Make sure JSON output is enabled.`,
+            );
+          const payload = (await response.json()) as {
+            results?: Array<{ title?: string; url?: string; content?: string }>;
+          };
+          return (
+            (payload.results ?? [])
+              .slice(0, limit)
+              .map(
+                (result, index) =>
+                  `${index + 1}. ${result.title ?? "Untitled"}\n${result.url ?? ""}\n${result.content ?? ""}`,
+              )
+              .join("\n\n") || "(no results)"
+          );
+        }
+        const response = await fetch("https://api.ydc-index.io/v1/search", {
+          method: "POST",
           signal: ctx.abortSignal,
-          headers: { accept: "application/json" },
+          headers: {
+            "X-API-Key": youcomApiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query }),
         });
         if (!response.ok)
           throw new Error(
-            `SearXNG returned HTTP ${response.status}. Make sure JSON output is enabled.`,
+            response.status === 401 || response.status === 403
+              ? "You.com rejected the API key (HTTP " +
+                response.status +
+                "). Check opencodex.youcomApiKey."
+              : `You.com returned HTTP ${response.status}.`,
           );
         const payload = (await response.json()) as {
-          results?: Array<{ title?: string; url?: string; content?: string }>;
+          hits?: Array<{
+            title?: string;
+            url?: string;
+            description?: string;
+            snippets?: string[];
+          }>;
         };
         return (
-          (payload.results ?? [])
+          (payload.hits ?? [])
             .slice(0, limit)
             .map(
-              (result, index) =>
-                `${index + 1}. ${result.title ?? "Untitled"}\n${result.url ?? ""}\n${result.content ?? ""}`,
+              (hit, index) =>
+                `${index + 1}. ${hit.title ?? "Untitled"}\n${hit.url ?? ""}\n${(hit.snippets ?? []).join(" ") || (hit.description ?? "")}`,
             )
             .join("\n\n") || "(no results)"
         );
